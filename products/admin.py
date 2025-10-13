@@ -1,3 +1,71 @@
 from django.contrib import admin
+from django.utils.translation import gettext_lazy as _
+from mptt.admin import MPTTModelAdmin
+from django.utils.text import slugify
 
-# Register your models here.
+from .models import ProductCategory
+
+
+@admin.register(ProductCategory)
+class ProductCategoryAdmin(MPTTModelAdmin):
+    """
+    Hierarchical category admin using django-mptt's tree UI.
+    """
+    mptt_level_indent = 20  # visual indentation per level
+
+    # --- Display ---
+    list_display = (
+        "indented_title",
+        "slug",
+        "is_active",
+        "parent",
+    )
+    list_display_links = ("indented_title",)
+    list_editable = ("is_active",)
+    list_filter = ("is_active",)
+    search_fields = ("title", "slug", "description")
+    ordering = ("tree_id", "lft")  # natural tree order
+
+    # --- Form options ---
+    prepopulated_fields = {"slug": ("title",)}
+    list_select_related = ("parent",)
+    readonly_fields = ("full_path_display",)
+
+    fieldsets = (
+        (None, {
+            "fields": (
+                "parent",
+                "title",
+                "slug",
+                "description",
+                "is_active",
+            )
+        }),
+    )
+
+    # --- Custom display methods ---
+    def indented_title(self, obj):
+        """Show the title indented according to tree level."""
+        return f"{'— ' * obj.level}{obj.title}"
+    indented_title.short_description = _("Category")
+
+    def full_path_display(self, obj):
+        """Show the full hierarchical path."""
+        return obj.full_path
+    full_path_display.short_description = _("Full path")
+
+    # --- Save logic ---
+    def save_model(self, request, obj, form, change):
+        """
+        Auto-fill slug if not set.
+        Depth & activation validation handled by model.
+        """
+        if not obj.slug:
+            obj.slug = slugify(obj.title)
+        super().save_model(request, obj, form, change)
+
+    # --- Query optimization ---
+    def get_queryset(self, request):
+        """Ensure related parent data is fetched efficiently."""
+        qs = super().get_queryset(request)
+        return qs.select_related("parent")
