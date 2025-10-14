@@ -3,10 +3,17 @@ from django.utils.translation import gettext_lazy as _
 from mptt.admin import MPTTModelAdmin
 from django.utils.text import slugify
 
-from .models import ProductCategory
+from . import models
 
 
-@admin.register(ProductCategory)
+# inlines
+class ProductTypeAttributeInline(admin.TabularInline):
+    model = models.ProductTypeAttribute
+    extra = 1
+    min_num = 1
+
+
+@admin.register(models.ProductCategory)
 class ProductCategoryAdmin(MPTTModelAdmin):
     """
     Hierarchical category admin using django-mptt's tree UI.
@@ -47,11 +54,13 @@ class ProductCategoryAdmin(MPTTModelAdmin):
     def indented_title(self, obj):
         """Show the title indented according to tree level."""
         return f"{'— ' * obj.level}{obj.title}"
+
     indented_title.short_description = _("Category")
 
     def full_path_display(self, obj):
         """Show the full hierarchical path."""
         return obj.full_path
+
     full_path_display.short_description = _("Full path")
 
     # --- Save logic ---
@@ -69,3 +78,13 @@ class ProductCategoryAdmin(MPTTModelAdmin):
         """Ensure related parent data is fetched efficiently."""
         qs = super().get_queryset(request)
         return qs.select_related("parent")
+
+
+@admin.register(models.ProductType)
+class ProductTypeAdmin(admin.ModelAdmin):
+    inlines = (ProductTypeAttributeInline,)
+
+
+@admin.register(models.ProductAttribute)
+class ProductAttributeAdmin(admin.ModelAdmin):
+    pass

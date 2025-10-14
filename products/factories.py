@@ -33,4 +33,26 @@ class ProductCategoryFactory(factory.django.DjangoModelFactory):
             ProductCategoryFactory(parent=self)
 
 
+class ProductTypeFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = models.ProductType
 
+    title = factory.Faker("word")
+    has_variants = factory.Faker("boolean")
+
+
+class ProductAttributeFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = models.ProductAttribute
+
+    title = factory.Faker("word")
+    scope = factory.Iterator([models.ProductAttribute.Scope.PRODUCT, models.ProductAttribute.Scope.VARIANT])
+
+
+class ProductTypeAttributeFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = models.ProductTypeAttribute
+
+    product_type = factory.SubFactory(ProductTypeFactory)
+    product_attribute = factory.SubFactory(ProductAttributeFactory)
+    required = factory.Faker("boolean")

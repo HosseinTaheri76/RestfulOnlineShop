@@ -231,3 +231,158 @@ class ProductCategory(MPTTModel):
                 prev_parent = type(self).objects.filter(pk=prev_parent_id).first()
                 if prev_parent:
                     self._deactivate_ancestors_if_has_no_active_descendants(prev_parent)
+
+
+class ProductType(models.Model):
+    """
+    Represents a product schema defining which attributes and variant logic apply to products.
+
+    Examples:
+        - "Smartphone" (has variants like different storage or colors)
+        - "Laptop" (no variants)
+        - "T-Shirt" (variants by color and size)
+    """
+
+    title = models.CharField(
+        max_length=100,
+        unique=True,
+        verbose_name=_("title"),
+        help_text=_("A descriptive name for this product type (e.g., 'Smartphone', 'Laptop')."),
+    )
+    has_variants = models.BooleanField(
+        default=False,
+        verbose_name=_("has variants"),
+        help_text=_(
+            "Indicates whether products of this type can have multiple variants. "
+            "If enabled, products under this type can define variant-specific attributes "
+            "(e.g., color, size, storage) and each variant can have its own SKU, price, and stock. "
+            "If disabled, products of this type are treated as single, non-variant items."
+        ),
+    )
+
+    class Meta:
+        verbose_name = _("Product Type")
+        verbose_name_plural = _("Product Types")
+        ordering = ["title"]
+
+    def __str__(self):
+        return self.title
+
+
+class ProductAttribute(models.Model):
+    """
+    Defines a characteristic that can describe a product or a variant.
+
+    Attributes may be:
+        - Product-level (shared by all variants, e.g., Brand, Screen Size)
+        - Variant-level (differs per variant, e.g., Color, Size, Storage)
+    """
+
+    class Scope(models.TextChoices):
+        PRODUCT = "product", _("Product")
+        VARIANT = "variant", _("Variant")
+
+    title = models.CharField(
+        max_length=128,
+        unique=True,
+        verbose_name=_("title"),
+        help_text=_("Human-readable name for this attribute (e.g., 'Color', 'Storage', 'Brand')."),
+    )
+    scope = models.CharField(
+        max_length=10,
+        choices=Scope.choices,
+        verbose_name=_("scope"),
+        help_text=_(
+            "Defines whether this attribute applies to the product as a whole or to its variants. "
+            "Product-level attributes are shared by all variants (e.g., Brand, CPU, Screen Size). "
+            "Variant-level attributes can differ between variants (e.g., Color, Size, Storage)."
+        ),
+    )
+    filterable = models.BooleanField(
+        default=False,
+        verbose_name=_("filterable"),
+        help_text=_(
+            "If enabled, this attribute will appear as a filter option in product listings "
+            "and search pages. Use this for attributes that customers typically use to narrow down "
+            "results (e.g., Color, Size, Brand). Attributes that are only descriptive "
+            "(e.g., Model Number, Material Composition) should usually not be filterable."
+        ),
+    )
+
+    class Meta:
+        verbose_name = _("Product Attribute")
+        verbose_name_plural = _("Product Attributes")
+        ordering = ["title"]
+
+    def __str__(self):
+        return self.title
+
+
+class ProductTypeAttribute(models.Model):
+    """
+    Defines the relationship between a ProductType and a ProductAttribute,
+    specifying whether the attribute is required.
+
+    This acts as a schema rule ensuring that only valid attributes can be assigned
+    to a product type — for example, preventing variant-level attributes from being
+    used on non-variant product types.
+    """
+
+    product_type = models.ForeignKey(
+        to="ProductType",
+        on_delete=models.CASCADE,
+        related_name="type_attributes",
+        verbose_name=_("product type"),
+    )
+    product_attribute = models.ForeignKey(
+        to="ProductAttribute",
+        on_delete=models.CASCADE,
+        related_name="type_attributes",
+        verbose_name=_("product attribute"),
+    )
+    required = models.BooleanField(
+        default=False,
+        verbose_name=_("required"),
+        help_text=_(
+            "If enabled, this attribute must have a value for every product or variant "
+            "of this type. Leave unchecked for optional attributes. "
+            "For example, 'Storage Size' might be required for all smartphone variants, "
+            "while 'Color' might be optional."
+        ),
+    )
+
+    class Meta:
+        verbose_name = _("Type Attribute")
+        verbose_name_plural = _("Type Attributes")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product_type", "product_attribute"],
+                name="unique_type_attribute",
+            ),
+        ]
+        ordering = ["product_type__title", "product_attribute__title"]
+
+    def __str__(self):
+        return f"{self.product_type.title} → {self.product_attribute.title}"
+
+    # ------------------------------------------------------------------
+    # Validation Logic
+    # ------------------------------------------------------------------
+    def clean(self):
+        """
+        Performs validation to ensure:
+        Variant-level attributes aren't used on non-variant product types.
+        """
+        self._validate_scope_compatibility()
+
+    def _validate_scope_compatibility(self):
+        """Ensure variant attributes aren't assigned to non-variant product types."""
+        if (
+            not self.product_type.has_variants
+            and self.product_attribute.scope == self.product_attribute.Scope.VARIANT
+        ):
+            raise ValidationError({
+                "product_attribute": _(
+                    "This product type does not support variant-level attributes."
+                )
+            })
