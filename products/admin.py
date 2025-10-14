@@ -13,6 +13,12 @@ class ProductTypeAttributeInline(admin.TabularInline):
     min_num = 1
 
 
+class ProductAttributeOptionInline(admin.TabularInline):
+    model = models.ProductAttributeOption
+    extra = 1
+    min_num = 1
+
+
 @admin.register(models.ProductCategory)
 class ProductCategoryAdmin(MPTTModelAdmin):
     """
@@ -87,4 +93,4 @@ class ProductTypeAdmin(admin.ModelAdmin):
 
 @admin.register(models.ProductAttribute)
 class ProductAttributeAdmin(admin.ModelAdmin):
-    pass
+    inlines = (ProductAttributeOptionInline,)

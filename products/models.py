@@ -318,6 +318,36 @@ class ProductAttribute(models.Model):
         return self.title
 
 
+class ProductAttributeOption(models.Model):
+    """
+    Represents a selectable value (option) for a product attribute.
+
+    For example,
+      - If the attribute is "Color", options might be "Red", "Blue", "Green".
+      - If the attribute is "Size", options might be "S", "M", "L", "XL".
+
+    Each option belongs to a single ProductAttribute and defines one of its possible values.
+    The combination of (product_attribute, value) must be unique to prevent duplicate options.
+    """
+
+    product_attribute = models.ForeignKey(
+        to=ProductAttribute,
+        on_delete=models.CASCADE,
+        related_name='options',
+        verbose_name=_("product attribute"),
+    )
+    value = models.CharField(
+        max_length=128,
+        verbose_name=_("value"),
+    )
+
+    class Meta:
+        unique_together = (('product_attribute', 'value'),)
+
+    def __str__(self):
+        return f"{self.product_attribute.title}: {self.value}"
+
+
 class ProductTypeAttribute(models.Model):
     """
     Defines the relationship between a ProductType and a ProductAttribute,
@@ -378,11 +408,94 @@ class ProductTypeAttribute(models.Model):
     def _validate_scope_compatibility(self):
         """Ensure variant attributes aren't assigned to non-variant product types."""
         if (
-            not self.product_type.has_variants
-            and self.product_attribute.scope == self.product_attribute.Scope.VARIANT
+                not self.product_type.has_variants
+                and self.product_attribute.scope == self.product_attribute.Scope.VARIANT
         ):
             raise ValidationError({
                 "product_attribute": _(
                     "This product type does not support variant-level attributes."
                 )
             })
+
+class Product(models.Model):
+    """
+    Represents a sellable product in the catalog.
+
+    A product can either:
+      - Be a standalone item with no variants (price stored directly here), or
+      - Have variants (e.g., different sizes, colors, or configurations),
+        in which case pricing and stock are defined at the variant level.
+
+    The allowed attributes for a product are determined by its `product_type`,
+    and it is classified under a `product_category` (MPTT tree).
+    """
+
+    product_type = models.ForeignKey(
+        to="ProductType",
+        on_delete=models.PROTECT,
+        related_name="products",
+        verbose_name=_("product type"),
+        help_text=_("Defines the type of product, determining allowed attributes and whether it can have variants."),
+    )
+    product_category = TreeForeignKey(
+        to="ProductCategory",
+        on_delete=models.PROTECT,
+        related_name="products",
+        verbose_name=_("product category"),
+        help_text=_("The hierarchical category this product belongs to."),
+    )
+    title = models.CharField(
+        max_length=255,
+        unique=True,
+        verbose_name=_("title"),
+        help_text=_("The human-readable name of the product."),
+    )
+    slug = models.SlugField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        allow_unicode=True,
+        verbose_name=_("slug"),
+        help_text=_("Unique identifier used in URLs. Auto-generated from title if left blank."),
+    )
+    price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name=_("price"),
+        help_text=_(
+            "Set a base price only if this product has no variants. "
+            "For products with variants, leave this blank — "
+            "each variant will define its own price."
+        ),
+    )
+    description = models.TextField(
+        blank=True,
+        verbose_name=_("description"),
+        help_text=_("Optional long-form description displayed on the product page."),
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name=_("is active"),
+        help_text=_("Uncheck to hide this product from the storefront."),
+    )
+
+    class Meta:
+        verbose_name = _("product")
+        verbose_name_plural = _("products")
+        ordering = ["title"]
+
+    def __str__(self):
+        return self.title
+
+    def _set_slug(self) -> None:
+        if not self.slug:
+            self.slug = slugify(self.title, allow_unicode=True)
+
+    def save(self, *args, **kwargs):
+        """Auto-generate slug from title if not provided."""
+        self._set_slug()
+        super().save(*args, **kwargs)
+
+
