@@ -3,6 +3,7 @@ from typing import Optional, Set
 from django.db import models, transaction
 from django.db.models import Q
 from django.db.models.aggregates import Max
+from django.db.models.functions.text import Lower
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
@@ -10,8 +11,51 @@ from django.core.exceptions import ValidationError
 from model_utils import FieldTracker
 from mptt.models import MPTTModel, TreeForeignKey
 
+from utils.models.validation import ModelValidationMixin
 
-class ProductCategory(MPTTModel):
+
+class ActiveProductManager(models.Manager):
+    """
+    Custom manager for the Product model that returns only *active* products.
+
+    This manager enforces a storefront-level visibility rule by excluding
+    products that are either:
+
+      • Inactive themselves (`is_active=False`), or
+      • Belong to an inactive category (`product_category__is_active=False`).
+
+    By using this manager, developers can safely query for products that should
+    be visible to customers without having to remember filtering conditions.
+    """
+
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True, product_category__is_active=True)
+
+
+class ActiveProductVariantManager(models.Manager):
+    """
+    Custom manager for the ProductVariant model that returns only *active* product-variants.
+
+    This manager enforces a storefront-level visibility rule by excluding
+    product variants that are either:
+
+      • Inactive themselves (`is_active=False`), or
+      • Belong to an inactive product (`product__is_active=False`).
+      • Belong to an inactive category (`product__product_category__is_active=False`).
+
+    By using this manager, developers can safely query for products that should
+    be visible to customers without having to remember filtering conditions.
+    """
+
+    def get_queryset(self):
+        return super().get_queryset().filter(
+            is_active=True,
+            product__is_active=True,
+            product__product_category__is_active=True
+        )
+
+
+class ProductCategory(ModelValidationMixin, MPTTModel):
     """
     MPTT-backed product category with:
       - maximum tree depth enforced (levels 0..2 allowed)
@@ -73,12 +117,6 @@ class ProductCategory(MPTTModel):
     @property
     def full_path(self) -> str:
         return " → ".join(self.get_ancestors(include_self=True).values_list("title", flat=True))
-
-    def clean(self) -> None:
-        """
-        Validate tree depth rules prior to saving/moving.
-        """
-        self._validate_depth()
 
     # ----------------------------
     # Public model hooks
@@ -145,6 +183,16 @@ class ProductCategory(MPTTModel):
 
         if resulting_deepest > self.MAX_LEVEL:
             raise ValidationError({"parent": error_msg % {"category": self.parent}})
+
+    def _validate_categories_with_products_cannot_accept_subcategories(self):
+        """
+        Ensure that a category that already has products cannot become
+        a parent of another category. This maintains a clean category tree
+        where leaf categories hold products, and parent categories only
+        organize subcategories.
+        """
+        if self.parent and self.parent.products.exists():
+            raise ValidationError(_("A category that contains products cannot have subcategories."))
 
     # ----------------------------
     # Helpers: activation propagation
@@ -233,7 +281,7 @@ class ProductCategory(MPTTModel):
                     self._deactivate_ancestors_if_has_no_active_descendants(prev_parent)
 
 
-class ProductType(models.Model):
+class ProductType(ModelValidationMixin, models.Model):
     """
     Represents a product schema defining which attributes and variant logic apply to products.
 
@@ -259,6 +307,11 @@ class ProductType(models.Model):
             "If disabled, products of this type are treated as single, non-variant items."
         ),
     )
+
+    _tracker = FieldTracker(fields=["has_variants", ])
+
+    def _validate_has_variants(self):
+        pass  # todo: implement
 
     class Meta:
         verbose_name = _("Product Type")
@@ -342,13 +395,19 @@ class ProductAttributeOption(models.Model):
     )
 
     class Meta:
-        unique_together = (('product_attribute', 'value'),)
+        constraints = [
+            models.UniqueConstraint(
+                Lower("value"),
+                "product_attribute",
+                name="unique_attr_value_ci"
+            )
+        ]
 
     def __str__(self):
         return f"{self.product_attribute.title}: {self.value}"
 
 
-class ProductTypeAttribute(models.Model):
+class ProductTypeAttribute(ModelValidationMixin, models.Model):
     """
     Defines the relationship between a ProductType and a ProductAttribute,
     specifying whether the attribute is required.
@@ -398,12 +457,6 @@ class ProductTypeAttribute(models.Model):
     # ------------------------------------------------------------------
     # Validation Logic
     # ------------------------------------------------------------------
-    def clean(self):
-        """
-        Performs validation to ensure:
-        Variant-level attributes aren't used on non-variant product types.
-        """
-        self._validate_scope_compatibility()
 
     def _validate_scope_compatibility(self):
         """Ensure variant attributes aren't assigned to non-variant product types."""
@@ -417,7 +470,8 @@ class ProductTypeAttribute(models.Model):
                 )
             })
 
-class Product(models.Model):
+
+class Product(ModelValidationMixin, models.Model):
     """
     Represents a sellable product in the catalog.
 
@@ -450,6 +504,17 @@ class Product(models.Model):
         verbose_name=_("title"),
         help_text=_("The human-readable name of the product."),
     )
+    sku = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        unique=True,
+        verbose_name=_("SKU"),
+        help_text=_(
+            "Stock Keeping Unit — required for products without variants. "
+            "Leave blank if this product has variants; each variant will define its own SKU."
+        ),
+    )
     slug = models.SlugField(
         max_length=255,
         unique=True,
@@ -481,6 +546,9 @@ class Product(models.Model):
         help_text=_("Uncheck to hide this product from the storefront."),
     )
 
+    objects = models.Manager()
+    active = ActiveProductManager()
+
     class Meta:
         verbose_name = _("product")
         verbose_name_plural = _("products")
@@ -498,4 +566,75 @@ class Product(models.Model):
         self._set_slug()
         super().save(*args, **kwargs)
 
+    def _validate_category_is_leaf_node(self):
+        if not self.product_category.is_leaf_node():
+            raise ValidationError({'product_category': _('Product category must be a leaf node')})
 
+    def _validate_price(self):
+        if self.product_type.has_variants and self.price:
+            raise ValidationError({'price': _("Price must be empty for products with variants.")})
+        elif not self.product_type.has_variants and not self.price:
+            raise ValidationError({'price': _("Price must be filled for single variant products.")})
+
+    def _validate_sku(self):
+        if self.product_type.has_variants and self.sku:
+            raise ValidationError({'sku': _("Sku must be empty for products with variants.")})
+        elif not self.product_type.has_variants and not self.sku:
+            raise ValidationError({'sku': _("sku must be filled for single variant products.")})
+
+
+class ProductVariant(ModelValidationMixin, models.Model):
+    """
+    Represents a specific variation of a product (e.g., iPhone 16 128GB Blue vs iPhone 16 256GB Black).
+
+    Each variant:
+    - Belongs to a `Product`.
+    - Has a unique SKU (Stock Keeping Unit).
+    - Can optionally have its own display title.
+    - Can be active/inactive independently, but activation is also dependent
+      on the product and category being active.
+    """
+
+    product = models.ForeignKey(
+        to="products.Product",
+        on_delete=models.CASCADE,
+        related_name="variants",
+        verbose_name=_("product"),
+        help_text=_("The product this variant belongs to."),
+    )
+    sku = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name=_("SKU"),
+        help_text=_("Unique stock keeping unit identifier for inventory tracking."),
+    )
+    title = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name=_("title"),
+        help_text=_("Optional variant-specific title (e.g., '128GB Blue')."),
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name=_("is active"),
+        help_text=_("Whether this variant is visible and available for sale."),
+    )
+
+    # Default manager
+    objects = models.Manager()
+
+    # Custom manager that only returns active variants whose
+    # product and category are also active.
+    active = ActiveProductVariantManager()
+
+    class Meta:
+        verbose_name = _("product variant")
+        verbose_name_plural = _("product variants")
+        ordering = ["product", "sku"]
+
+    def __str__(self):
+        return self.title or f"{self.product.title} Variant"
+
+    def _validate_product_type_is_multi_variant(self):
+        if not self.product.product_type.has_variants:
+            raise ValidationError(_("This product cannot have variants."))

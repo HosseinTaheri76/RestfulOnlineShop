@@ -19,6 +19,11 @@ class ProductAttributeOptionInline(admin.TabularInline):
     min_num = 1
 
 
+class ProductVariantInline(admin.TabularInline):
+    model = models.ProductVariant
+    extra = 1
+
+
 @admin.register(models.ProductCategory)
 class ProductCategoryAdmin(MPTTModelAdmin):
     """
@@ -94,3 +99,8 @@ class ProductTypeAdmin(admin.ModelAdmin):
 @admin.register(models.ProductAttribute)
 class ProductAttributeAdmin(admin.ModelAdmin):
     inlines = (ProductAttributeOptionInline,)
+
+
+@admin.register(models.Product)
+class ProductAdmin(admin.ModelAdmin):
+    inlines = (ProductVariantInline,)

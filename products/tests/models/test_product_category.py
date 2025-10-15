@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from products import models
 from products import factories
 
+
 class TestProductCategoryDepthValidation(TestCase):
     Factory = factories.ProductCategoryFactory
 
@@ -111,4 +112,18 @@ class TestProductCategoryActivationLogic(TestCase):
         self.assertTrue(self.child.is_active)
         self.assertTrue(self.grandchild.is_active)
         self.assertFalse(child_2.is_active)
+
+
+class TestCategoriesWithProductsCannotAcceptSubCategories(TestCase):
+    Factory = factories.ProductCategoryFactory
+
+    def setUp(self):
+        self.category = factories.ProductCategoryFactory()
+        self.product = factories.ProductFactory(product_category=self.category)
+
+    def test_category_with_product_cannot_accept_sub_categories(self):
+        category = self.Factory.build(parent=self.category)
+        with self.assertRaises(ValidationError) as context:
+            category.full_clean()
+        self.assertIn("A category that contains products cannot have subcategories.", str(context.exception))
 
