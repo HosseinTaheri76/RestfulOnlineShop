@@ -1,3 +1,5 @@
+from functools import wraps
+
 from django.core.exceptions import ValidationError
 
 
@@ -49,3 +51,22 @@ class ModelValidationMixin:
 
         if errors:
             raise ValidationError(errors)
+
+
+def skip_if_missing_fields(*field_names):
+    """
+    Decorator to skip a validator method if any of the given fields are missing (None).
+    """
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            for field in field_names:
+                # Use <field>_id to avoid fetching a related object
+                if getattr(self, f"{field}_id", None) is None:
+                    return None
+            return func(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorator

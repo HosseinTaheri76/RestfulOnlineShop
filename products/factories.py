@@ -121,4 +121,55 @@ class ProductFactory(factory.django.DjangoModelFactory):
     @factory.lazy_attribute
     def price(self):
         # Assign price only for single-variant products
-        return fake.pydecimal(left_digits=4, right_digits=2, positive=True) if not self.product_type.has_variants else None
+        return fake.pydecimal(left_digits=4, right_digits=2,
+                              positive=True) if not self.product_type.has_variants else None
+
+
+class ProductVariantFactory(factory.django.DjangoModelFactory):
+    """
+    Factory for generating ProductVariant instances for testing.
+
+    Automatically creates a related Product (via ProductFactory) unless one is provided.
+    """
+
+    class Meta:
+        model = models.ProductVariant
+
+    product = factory.SubFactory(ProductFactory)
+    price = factory.LazyAttribute(lambda _: round(fake.pydecimal(left_digits=4, right_digits=2, positive=True), 2))
+    sku = factory.LazyAttribute(lambda _: fake.unique.bothify(text="SKU-####"))
+    title = factory.LazyAttribute(lambda _: fake.word().capitalize())
+    is_active = True
+
+    @factory.post_generation
+    def title(obj, create, extracted, **kwargs):
+        """
+        Optional: Regenerate title if needed.
+        If extracted value is passed, use it; otherwise leave it as is.
+        """
+        if extracted:
+            obj.title = extracted
+            if create:
+                obj.save()
+
+
+class ProductAttributeOptionFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = models.ProductAttributeOption
+
+    product_attribute = factory.SubFactory(ProductAttributeFactory)
+    value = factory.LazyAttribute(lambda _: fake.word())
+
+
+class ProductSKUAttributeValueFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = models.ProductSKUAttributeValue
+
+    product = factory.SubFactory(ProductFactory)
+    product_variant = None
+    product_type_attribute = factory.LazyAttribute(
+        lambda o: ProductTypeAttributeFactory(product_type=o.product.product_type)
+    )
+    value = factory.LazyAttribute(
+        lambda o: ProductAttributeOptionFactory(product_attribute=o.product_type_attribute.product_attribute)
+    )
