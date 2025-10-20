@@ -5,7 +5,7 @@ from django.db.models import Q
 from django.db.models.aggregates import Max
 from django.db.models.functions.text import Lower
 from django.utils.text import slugify
-from django.utils.translation import gettext, gettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 
 from model_utils import FieldTracker
@@ -213,7 +213,7 @@ class ProductCategory(ModelValidationMixin, MPTTModel):
           - bulk update all deactivated nodes in one query
         """
         # load ancestors closest-first (nearest parent -> root)
-        ancestors = list(node.get_ancestors().prefetch_related("children").all())[::-1]
+        ancestors = list(node.get_ancestors().prefetch_related("children").all())
 
         # `to_deactivate` will collect pks we decide should be deactivated
         to_deactivate: Set[int] = set()
@@ -221,7 +221,7 @@ class ProductCategory(ModelValidationMixin, MPTTModel):
         to_deactivate.add(node.pk)
 
         # We'll check each ancestor's direct children; if none active outside to_deactivate, mark it
-        for anc in ancestors:
+        for anc in reversed(ancestors):
             children = list(anc.children.all())
             # if there exists any active child not in to_deactivate, keep ancestor active
             has_active_child_outside = any(
@@ -339,7 +339,7 @@ class ProductType(ModelValidationMixin, models.Model):
         return self.title
 
 
-class ProductAttribute(models.Model):
+class ProductAttribute(ModelValidationMixin, models.Model):
     """
     Defines a characteristic that can describe a product or a variant.
 
@@ -379,6 +379,8 @@ class ProductAttribute(models.Model):
         ),
     )
 
+    _tracker = FieldTracker(fields=["scope", ])
+
     class Meta:
         verbose_name = _("Product Attribute")
         verbose_name_plural = _("Product Attributes")
@@ -386,6 +388,37 @@ class ProductAttribute(models.Model):
 
     def __str__(self):
         return self.title
+
+    def _validate_scope_change(self):
+        """
+        Prevent changing the 'scope' of an attribute if it already has
+        associated ProductSKUAttributeValue records.
+
+        Example:
+            - 'scope' determines whether the attribute applies to products or variants.
+            - Once used in product or variant values, changing scope would cause inconsistency.
+        """
+        if not self.pk:
+            return  # no existing record to validate
+
+        if not self._tracker.has_changed("scope"):
+            return  # scope isn't changed → safe
+
+        # Check for existing usage efficiently
+        linked_values_exist = (
+            ProductSKUAttributeValue.objects
+            .filter(product_type_attribute__product_attribute_id=self.pk)
+            .only("pk")  # lightweight query
+            .exists()
+        )
+
+        if linked_values_exist:
+            raise ValidationError({
+                "scope": _(
+                    "You cannot change the scope of this attribute because "
+                    "it is already used in one or more product or variant attribute values."
+                )
+            })
 
 
 class ProductAttributeOption(models.Model):
@@ -509,7 +542,7 @@ class Product(ModelValidationMixin, models.Model):
         verbose_name=_("product type"),
         help_text=_("Defines the type of product, determining allowed attributes and whether it can have variants."),
     )
-    product_category = TreeForeignKey(
+    product_category = models.ForeignKey(
         to=ProductCategory,
         on_delete=models.PROTECT,
         related_name="products",
@@ -597,18 +630,17 @@ class Product(ModelValidationMixin, models.Model):
             raise ValidationError({"is_active": _("Cannot activate product under inactive category.")})
 
     @skip_if_missing_fields("product_type")
-    def _validate_price(self):
-        if self.product_type.has_variants and self.price:
-            raise ValidationError({'price': _("Price must be empty for products with variants.")})
-        elif not self.product_type.has_variants and not self.price:
-            raise ValidationError({'price': _("Price must be filled for single variant products.")})
-
-    @skip_if_missing_fields("product_type")
-    def _validate_sku(self):
-        if self.product_type.has_variants and self.sku:
-            raise ValidationError({'sku': _("Sku must be empty for products with variants.")})
-        elif not self.product_type.has_variants and not self.sku:
-            raise ValidationError({'sku': _("sku must be filled for single variant products.")})
+    def _validate_single_vs_multi_variant_fields(self):
+        if self.product_type.has_variants:
+            if self.price:
+                raise ValidationError({'price': _("Price must be empty for products with variants.")})
+            if self.sku:
+                raise ValidationError({'sku': _("SKU must be empty for products with variants.")})
+        else:
+            if not self.price:
+                raise ValidationError({'price': _("Price must be filled for single-variant products.")})
+            if not self.sku:
+                raise ValidationError({'sku': _("SKU must be filled for single-variant products.")})
 
     def _validate_product_type_change(self):
         if self.pk and self._tracker.has_changed("product_type_id"):
@@ -676,7 +708,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
         ]
 
     def __str__(self):
-        return self.title or f"{self.product.title} Variant"
+        return self.title or f"{self.product.title} ({self.sku})"
 
     @skip_if_missing_fields('product')
     def _validate_product_type_is_multi_variant(self):
@@ -775,11 +807,9 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
         Ensures that the chosen value belongs to the correct attribute.
         """
         if self.value.product_attribute_id != self.product_type_attribute.product_attribute_id:
-            raise ValidationError(
-                {"value": _("The selected option does not belong to the associated attribute.")}
-            )
+            raise ValidationError({"value": _("The selected option does not belong to the associated attribute.")})
 
-    @skip_if_missing_fields('product_variant', 'product_type_attribute')
+    @skip_if_missing_fields('product_type_attribute')
     def _validate_scope_matches_variant_usage(self):
         attr_scope = self.product_type_attribute.product_attribute.scope
         if self.product_variant_id and attr_scope == ProductAttribute.Scope.PRODUCT:
@@ -790,3 +820,119 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
             raise ValidationError({
                 "product_type_attribute": _("Variant-level attributes cannot be assigned to products.")
             })
+
+    @skip_if_missing_fields('product_type_attribute')
+    def _validate_unique_attribute(self):
+
+        qs = self.__class__.objects.filter(
+            product_type_attribute_id=self.product_type_attribute_id,
+            product_id=self.product_id
+        )
+
+        if self.product_variant_id:
+            qs = qs.filter(product_variant_id=self.product_variant_id)
+
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+
+        if qs.exists():
+            if self.product_variant_id:
+                msg = _("This attribute already exists for this product variant.")
+            else:
+                msg = _("This attribute already exists for this product.")
+
+            raise ValidationError({'product_type_attribute': msg})
+
+class ProductImage(ModelValidationMixin, models.Model):
+
+    product = models.ForeignKey(
+        to=Product,
+        on_delete=models.CASCADE,
+        related_name="images",
+        verbose_name=_("product"),
+    )
+    product_variant = models.ForeignKey(
+        to=ProductVariant,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="images",
+        verbose_name=_("variant"),
+        help_text=_("Optional. Attach this image to a specific variant (e.g., color photo)."),
+    )
+    image = models.ImageField(
+        upload_to="products/images/",
+        verbose_name=_("image"),
+    )
+    alt_text = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name=_("alt text"),
+        help_text=_("Descriptive text for accessibility and SEO."),
+    )
+    is_primary = models.BooleanField(
+        default=False,
+        verbose_name=_("is primary"),
+        help_text=_("Mark as the main display image for this product or variant."),
+    )
+    position = models.PositiveSmallIntegerField(
+        default=0,
+        verbose_name=_("display order"),
+        help_text=_("Smaller numbers appear first."),
+    )
+
+    class Meta:
+        ordering = ["position"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product", "product_variant"],
+                condition=Q(is_primary=True),
+                name="unique_primary_image_per_product_or_product_variant",
+            ),
+        ]
+
+    def __str__(self):
+        scope = f"variant {self.product_variant.sku}" if self.product_variant else "product"
+        return f"{self.product.title} ({scope})"
+
+    @skip_if_missing_fields("product")
+    def _validate_variant_belongs_to_product(self):
+        if self.product_variant and self.product_variant.product_id != self.product_id:
+            raise ValidationError({"product_variant": _("Product variant must belong to the product.")})
+
+    @skip_if_missing_fields("product")
+    def _validate_unique_primary_image(self):
+        if self.is_primary:
+            qs = ProductImage.objects.filter(product=self.product, is_primary=True)
+            if self.product_variant_id:
+                qs = qs.filter(product_variant=self.product_variant)
+            else:
+                qs = qs.filter(product_variant__isnull=True)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError({"is_primary": _("Only one primary image is allowed per product or variant.")})
+
+    @skip_if_missing_fields("product", "product_variant")
+    def _validate_variant_usage(self):
+        if self.product_variant and not self.product.product_type.has_variants:
+            raise ValidationError({
+                "product_variant": _(
+                    "This product type does not support "
+                    "variants, so images cannot be variant-specific."
+                )
+            })
+
+    @skip_if_missing_fields("product")
+    def _validate_unique_position(self):
+        qs = ProductImage.objects.filter(product=self.product, position=self.position)
+        if self.product_variant_id:
+            qs = qs.filter(product_variant=self.product_variant)
+        else:
+            qs = qs.filter(product_variant__isnull=True)
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+        if qs.exists():
+            raise ValidationError({"position": _("This display order position is already used for another image.")})
+
+
