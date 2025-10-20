@@ -1,4 +1,5 @@
 import factory
+from django.core.files.base import ContentFile
 from django.utils.text import slugify
 from faker import Faker
 
@@ -121,8 +122,10 @@ class ProductFactory(factory.django.DjangoModelFactory):
     @factory.lazy_attribute
     def price(self):
         # Assign price only for single-variant products
-        return fake.pydecimal(left_digits=4, right_digits=2,
-                              positive=True) if not self.product_type.has_variants else None
+        return fake.pydecimal(
+            left_digits=4,
+            right_digits=2,
+            positive=True) if not self.product_type.has_variants else None
 
 
 class ProductVariantFactory(factory.django.DjangoModelFactory):
@@ -140,17 +143,6 @@ class ProductVariantFactory(factory.django.DjangoModelFactory):
     sku = factory.LazyAttribute(lambda _: fake.unique.bothify(text="SKU-####"))
     title = factory.LazyAttribute(lambda _: fake.word().capitalize())
     is_active = True
-
-    @factory.post_generation
-    def title(obj, create, extracted, **kwargs):
-        """
-        Optional: Regenerate title if needed.
-        If extracted value is passed, use it; otherwise leave it as is.
-        """
-        if extracted:
-            obj.title = extracted
-            if create:
-                obj.save()
 
 
 class ProductAttributeOptionFactory(factory.django.DjangoModelFactory):
@@ -173,3 +165,30 @@ class ProductSKUAttributeValueFactory(factory.django.DjangoModelFactory):
     value = factory.LazyAttribute(
         lambda o: ProductAttributeOptionFactory(product_attribute=o.product_type_attribute.product_attribute)
     )
+
+
+class ProductImageFactory(factory.django.DjangoModelFactory):
+    """
+    Factory for creating ProductImage instances for testing.
+    Automatically generates a fake image file and text.
+    """
+
+    class Meta:
+        model = models.ProductImage
+
+    product = factory.SubFactory("products.tests.factories.ProductFactory")
+    product_variant = None  # can override when needed
+    image = factory.LazyAttribute(lambda _: ContentFile(fake.image(image_format="jpeg"), name="test.jpg"))
+    alt_text = factory.LazyAttribute(lambda _: fake.sentence(nb_words=4))
+    is_primary = False
+    position = factory.Sequence(lambda n: n)
+
+
+class ProductStockFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = models.ProductStock
+
+    product = factory.SubFactory(ProductFactory)
+    product_variant = None
+    quantity = 10
+    reserved = 0

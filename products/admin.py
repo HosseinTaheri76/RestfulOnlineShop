@@ -4,6 +4,7 @@ from mptt import admin as mptt_admin
 
 from products import models
 
+
 # ─────────────────────────────────────────────
 # INLINE ADMINS
 # ─────────────────────────────────────────────
@@ -25,6 +26,7 @@ class ProductVariantInline(admin.TabularInline):
     extra = 0
     min_num = 1
 
+
 class ProductSkuAttributeValueInline(admin.TabularInline):
     model = models.ProductSKUAttributeValue
     extra = 0
@@ -39,6 +41,7 @@ class ProductSkuAttributeValueInline(admin.TabularInline):
             return ["product_variant"]
         return []
 
+
 class ProductImageInline(admin.TabularInline):
     model = models.ProductImage
     extra = 0
@@ -50,6 +53,20 @@ class ProductImageInline(admin.TabularInline):
         if isinstance(obj, models.Product):
             return ["product_variant"]
         return []
+
+
+class ProductStockInline(admin.TabularInline):
+    model = models.ProductStock
+    extra = 0
+
+    def get_exclude(self, request, obj=None):
+        """Hide product or variant field depending on context."""
+        if isinstance(obj, models.ProductVariant):
+            return ["product"]
+        if isinstance(obj, models.Product):
+            return ["product_variant"]
+        return []
+
 
 # ─────────────────────────────────────────────
 # MAIN ADMINS
@@ -98,7 +115,10 @@ class ProductAdmin(admin.ModelAdmin):
         inlines = super().get_inlines(request, obj).copy()
         if obj and obj.product_type.has_variants:
             inlines.append(ProductVariantInline)
+        if obj and not obj.product_type.has_variants:
+            inlines.insert(0, ProductStockInline)
         return inlines
+
 
 @admin.register(models.ProductVariant)
 class ProductVariantAdmin(admin.ModelAdmin):
@@ -106,16 +126,22 @@ class ProductVariantAdmin(admin.ModelAdmin):
     list_editable = ["is_active"]
     list_filter = ["is_active"]
     search_fields = ["product__title", "sku", "title"]
-    inlines = [ProductImageInline, ProductSkuAttributeValueInline]
+    inlines = [ProductStockInline, ProductImageInline, ProductSkuAttributeValueInline]
 
     def save_formset(self, request, form, formset, change):
         """Ensure inline ProductSKUAttributeValue links to correct product + variant."""
         instances = formset.save(commit=False)
         for instance in instances:
-            if isinstance(formset.model, (models.ProductSKUAttributeValue, models.ProductImage)):
+            if isinstance(
+                    formset.model,
+                    (
+                            models.ProductStock,
+                            models.ProductImage,
+                            models.ProductSKUAttributeValue,
+                    )
+            ):
                 instance.product_variant = form.instance
                 instance.product = form.instance.product
             instance.full_clean()
             instance.save()
         formset.save_m2m()
-

@@ -1,7 +1,7 @@
 from typing import Optional, Set
 
 from django.db import models, transaction
-from django.db.models import Q
+from django.db.models import Q, F
 from django.db.models.aggregates import Max
 from django.db.models.functions.text import Lower
 from django.utils.text import slugify
@@ -935,4 +935,111 @@ class ProductImage(ModelValidationMixin, models.Model):
         if qs.exists():
             raise ValidationError({"position": _("This display order position is already used for another image.")})
 
+
+class ProductStock(ModelValidationMixin, models.Model):
+    product = models.ForeignKey(
+        to=Product,
+        on_delete=models.CASCADE,
+        related_name="stocks",
+        verbose_name=_("product"),
+    )
+    product_variant = models.ForeignKey(
+        to=ProductVariant,
+        on_delete=models.CASCADE,
+        related_name="stocks",
+        null=True,
+        blank=True,
+        verbose_name=_("variant / SKU"),
+        help_text=_("Optional. Leave empty for products without variants."),
+    )
+    quantity = models.PositiveIntegerField(
+        default=0,
+        verbose_name=_("quantity"),
+    )
+    reserved = models.PositiveIntegerField(
+        default=0,
+        verbose_name=_("reserved"),
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product", "product_variant"],
+                name="unique_stock_per_product_or_variant",
+            ),
+        ]
+
+    def __str__(self):
+        if self.product_variant:
+            return f"{self.product.title} - {self.product_variant.sku}"
+        return f"{self.product.title}"
+
+    # ───────────────────────────────
+    # Derived property
+    # ───────────────────────────────
+    @property
+    def available(self) -> int:
+        """Return available (not reserved) stock."""
+        return max(0, self.quantity - self.reserved)
+
+    # ───────────────────────────────
+    # Stock operations
+    # ───────────────────────────────
+    def reserve(self, qty: int):
+        """Reserve stock (for pending orders)."""
+        if qty > self.available:
+            raise ValidationError(_("Not enough available stock to reserve."))
+        self.reserved += qty
+        self.save(update_fields=["reserved"])
+
+    def release(self, qty: int):
+        """Release reserved stock (e.g., cancelled order)."""
+        self.reserved = max(0, self.reserved - qty)
+        self.save(update_fields=["reserved"])
+
+    def decrease(self, qty: int):
+        """Reduce total quantity after successful sale."""
+        if qty > self.quantity:
+            raise ValidationError(_("Cannot decrease more than available quantity."))
+        self.quantity -= qty
+        self.reserved = max(0, self.reserved - qty)
+        self.save(update_fields=["quantity", "reserved"])
+
+    def increase(self, qty: int):
+        """Increase total quantity (restock)."""
+        self.quantity += qty
+        self.save(update_fields=["quantity"])
+
+    # ───────────────────────────────
+    # Validations
+    # ───────────────────────────────
+    @skip_if_missing_fields("product_variant", "product")
+    def _validate_variant_belongs_to_product(self):
+        """Ensure the variant belongs to the same product."""
+        if self.product_variant and self.product_variant.product_id != self.product_id:
+            raise ValidationError({"product_variant": _("Variant must belong to the product.")})
+
+    def _validate_reserved(self):
+        """Ensure reserved ≤ total quantity."""
+        if self.reserved > self.quantity:
+            raise ValidationError({"reserved": _("Reserved quantity cannot exceed total quantity.")})
+
+    @skip_if_missing_fields("product")
+    def _validate_variant_usage(self):
+        """
+        Validate that:
+        - Single-variant products should not have a variant-specific stock.
+        - Multi-variant products must specify a variant.
+        """
+        product_has_variants = self.product.product_type.has_variants
+
+        if product_has_variants and not self.product_variant:
+            raise ValidationError(
+                {"product_variant": _("Stock entry for multi-variant product must specify a variant.")}
+            )
+
+        if not product_has_variants and self.product_variant:
+            raise ValidationError(
+                {"product_variant": _("Stock entry for single-variant product must not specify a variant.")}
+            )
 
