@@ -31,7 +31,7 @@ class ProductVariantModelTests(TestCase):
         variant.full_clean()  # should not raise
         variant.save()
         self.assertIsNotNone(variant.pk)
-        self.assertEqual(str(variant), "Blue Variant")
+        self.assertIn("Blue Variant", str(variant))
 
     def test_variant_title_falls_back_to_product_name(self):
         """If no title is given, __str__ should use product title."""
@@ -93,7 +93,7 @@ class ProductVariantModelTests(TestCase):
             sku="SKU-TITLE",
             title="Red Model",
         )
-        self.assertEqual(str(variant), "Red Model")
+        self.assertIn("Red Model", str(variant))
 
     def test_cannot_activate_variant_under_inactive_product(self):
         self.product_with_variants.is_active = False
@@ -107,3 +107,39 @@ class ProductVariantModelTests(TestCase):
             variant.full_clean()
 
         self.assertIn("Cannot activate variant", str(ctx.exception))
+
+    # ────────────────────────────────
+    # PRIMARY HANDLING LOGIC TESTS
+    # ────────────────────────────────
+
+    def test_saving_primary_variant_unsets_other_primaries(self):
+        """When a new variant is saved as primary, it demotes previous primaries."""
+        v1 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=True)
+        v2 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=False)
+
+        # Make v2 primary
+        v2.is_primary = True
+        v2.save()
+        v1.refresh_from_db()
+        v2.refresh_from_db()
+
+        self.assertTrue(v2.is_primary)
+        self.assertFalse(v1.is_primary)
+
+    def test_first_variant_becomes_primary_automatically(self):
+        """If no primary exists, first variant saved becomes primary automatically."""
+        v1 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=False)
+        self.assertTrue(v1.is_primary)
+
+    def test_non_primary_variant_does_not_affect_existing_primary(self):
+        """Saving a non-primary variant should not unset existing primaries."""
+        v1 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=True)
+        v2 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=False)
+        v2.is_primary = False
+        v2.save()
+
+        v1.refresh_from_db()
+        v2.refresh_from_db()
+
+        self.assertTrue(v1.is_primary)
+        self.assertFalse(v2.is_primary)

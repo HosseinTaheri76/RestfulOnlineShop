@@ -43,21 +43,17 @@ class ProductImageValidationTests(TestCase):
 
     def test_only_one_primary_image_per_product(self):
         """Should raise if adding a second primary image for same product (no variant)."""
+        old = ProductImageFactory(product=self.product_with_variants, is_primary=True)
         ProductImageFactory(product=self.product_with_variants, is_primary=True)
-        dup = ProductImageFactory.build(product=self.product_with_variants, is_primary=True)
-
-        with self.assertRaises(ValidationError) as ctx:
-            dup.full_clean()
-        self.assertIn("is_primary", ctx.exception.message_dict)
+        old.refresh_from_db()
+        self.assertEqual(old.is_primary, False)
 
     def test_only_one_primary_image_per_variant(self):
         """Should raise if adding a second primary image for same variant."""
+        old = ProductImageFactory(product=self.product_with_variants, product_variant=self.variant_1, is_primary=True)
         ProductImageFactory(product=self.product_with_variants, product_variant=self.variant_1, is_primary=True)
-        dup = ProductImageFactory.build(product=self.product_with_variants, product_variant=self.variant_1, is_primary=True)
-
-        with self.assertRaises(ValidationError) as ctx:
-            dup.full_clean()
-        self.assertIn("is_primary", ctx.exception.message_dict)
+        old.refresh_from_db()
+        self.assertEqual(old.is_primary, False)
 
     # ----------------------------------------------------------------------
     # 3. Variant usage only for types that support variants

@@ -79,6 +79,7 @@ class ProductCategoryAdmin(mptt_admin.MPTTModelAdmin):
     list_editable = ["is_active"]
     list_filter = ["is_active"]
     search_fields = ["title", "slug"]
+    autocomplete_fields = ['parent', ]
     prepopulated_fields = {"slug": ("title",)}
 
     def get_queryset(self, request):
@@ -133,7 +134,7 @@ class ProductVariantAdmin(admin.ModelAdmin):
         instances = formset.save(commit=False)
         for instance in instances:
             if isinstance(
-                    formset.model,
+                    instance,
                     (
                             models.ProductStock,
                             models.ProductImage,
@@ -142,6 +143,5 @@ class ProductVariantAdmin(admin.ModelAdmin):
             ):
                 instance.product_variant = form.instance
                 instance.product = form.instance.product
-            instance.full_clean()
             instance.save()
         formset.save_m2m()

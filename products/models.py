@@ -1,4 +1,5 @@
 from typing import Optional, Set
+from functools import cached_property
 
 from django.db import models, transaction
 from django.db.models import Q, F
@@ -9,9 +10,25 @@ from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 
 from model_utils import FieldTracker
-from mptt.models import MPTTModel, TreeForeignKey
+from mptt.models import MPTTModel, TreeForeignKey, TreeManager
 
 from utils.models.validation import ModelValidationMixin, skip_if_missing_fields
+
+
+class ActiveProductCategoryManager(TreeManager):
+    """
+        Custom manager for the ProductCategory model that returns only *active* categories.
+
+        This manager enforces a storefront-level visibility rule by excluding
+        categories that are either:
+          • Inactive themselves (`is_active=False`), or
+
+        By using this manager, developers can safely query for categories that should
+        be visible to customers without having to remember filtering conditions.
+    """
+
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
 
 
 class ActiveProductManager(models.Manager):
@@ -95,7 +112,8 @@ class ProductCategory(ModelValidationMixin, MPTTModel):
         default=True,
         verbose_name=_("active")
     )
-
+    objects = TreeManager()
+    active = ActiveProductCategoryManager()
     # tracker to detect changes to parent and is_active
     _tracker = FieldTracker(fields=["parent_id", "is_active"])
 
@@ -619,6 +637,62 @@ class Product(ModelValidationMixin, models.Model):
         self._set_slug()
         super().save(*args, **kwargs)
 
+    @cached_property
+    def is_multi_variant(self) -> bool:
+        """True if this product type supports variants."""
+        return bool(self.product_type and self.product_type.has_variants)
+
+    @cached_property
+    def primary_variant(self):
+        """Return the product's primary variant, if any."""
+        if not self.is_multi_variant:
+            return None
+        # Efficient: hits DB once
+        return self.variants.filter(is_primary=True).select_related("product").first()
+
+    @cached_property
+    def effective_variant(self):
+        """Return the variant that represents this product (primary or self if single)."""
+        return self.primary_variant if self.is_multi_variant else None
+
+    @cached_property
+    def is_available(self) -> bool:
+        """Return True if this product or its primary variant has available stock."""
+        variant = self.effective_variant
+        target = variant or self
+
+        stock = getattr(target, "stocks", None)
+        if not stock:
+            return False
+
+        # Optimize: prefetch 'stocks' if using in serializer lists
+        first_stock = stock.first()
+        return bool(first_stock and first_stock.available)
+
+    @cached_property
+    def effective_price(self):
+        """Return the price of the product or its primary variant."""
+        if self.is_multi_variant:
+            variant = self.primary_variant
+            return variant.price if variant else 0
+        return self.price or 0
+
+    @cached_property
+    def thumbnail_url(self):
+        """Return the primary image URL for this product (product-level, then variant-level)."""
+        # Try product-level primary image first
+        img = self.images.filter(is_primary=True, product_variant__isnull=True).first()
+        if img and img.image:
+            return img.image.url
+
+        # Fallback to primary variant's primary image
+        if self.is_multi_variant and self.primary_variant:
+            img = self.primary_variant.images.filter(is_primary=True).first()
+            if img and img.image:
+                return img.image.url
+
+        return None
+
     @skip_if_missing_fields("product_category")
     def _validate_category_is_leaf_node(self):
         if not self.product_category.is_leaf_node():
@@ -660,7 +734,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
     """
 
     product = models.ForeignKey(
-        to="products.Product",
+        to=Product,
         on_delete=models.CASCADE,
         related_name="variants",
         verbose_name=_("product"),
@@ -688,6 +762,11 @@ class ProductVariant(ModelValidationMixin, models.Model):
         verbose_name=_("is active"),
         help_text=_("Whether this variant is visible and available for sale."),
     )
+    is_primary = models.BooleanField(
+        default=False,
+        verbose_name=_("is primary"),
+        help_text=_("Marks this as the main variant of the product."),
+    )
 
     # Default manager
     objects = models.Manager()
@@ -703,13 +782,29 @@ class ProductVariant(ModelValidationMixin, models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["product", "title"],
-                name="unique_variant_title_per_product"
+                name="unique_variant_title_per_product",
             ),
         ]
 
     def __str__(self):
-        return self.title or f"{self.product.title} ({self.sku})"
+        return f"{self.product.title} - {self.title or self.sku}"
 
+    @transaction.atomic
+    def save(self, *args, **kwargs):
+        self._handle_is_primary()
+        super().save(*args, **kwargs)
+
+    @cached_property
+    def is_available(self):
+        stock = getattr(self, "stocks", None)
+        if not stock:
+            return False
+        # Optimize: prefetch 'stocks' if using in serializer lists
+        first_stock = stock.first()
+        return bool(first_stock and first_stock.available)
+    # ────────────────────────────────
+    # Validations
+    # ────────────────────────────────
     @skip_if_missing_fields('product')
     def _validate_product_type_is_multi_variant(self):
         if not self.product.product_type.has_variants:
@@ -719,6 +814,24 @@ class ProductVariant(ModelValidationMixin, models.Model):
     def _validate_is_active(self):
         if self.is_active and not self.product.is_active:
             raise ValidationError({"is_active": _("Cannot activate variant under inactive product.")})
+
+    # ────────────────────────────────
+    # Helpers
+    # ────────────────────────────────
+    def _handle_is_primary(self):
+        if not self.product.product_type.has_variants:
+            return
+
+        qs = ProductVariant.objects.filter(product=self.product)
+
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+
+        if self.is_primary:
+            qs.select_for_update().update(is_primary=False)
+
+        elif not qs.filter(is_primary=True).exists():
+            self.is_primary = True
 
 
 class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
@@ -843,8 +956,8 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
 
             raise ValidationError({'product_type_attribute': msg})
 
-class ProductImage(ModelValidationMixin, models.Model):
 
+class ProductImage(ModelValidationMixin, models.Model):
     product = models.ForeignKey(
         to=Product,
         on_delete=models.CASCADE,
@@ -883,35 +996,20 @@ class ProductImage(ModelValidationMixin, models.Model):
 
     class Meta:
         ordering = ["position"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["product", "product_variant"],
-                condition=Q(is_primary=True),
-                name="unique_primary_image_per_product_or_product_variant",
-            ),
-        ]
 
     def __str__(self):
         scope = f"variant {self.product_variant.sku}" if self.product_variant else "product"
         return f"{self.product.title} ({scope})"
 
+    @transaction.atomic
+    def save(self, *args, **kwargs):
+        self._handle_is_primary()
+        super().save(*args, **kwargs)
+
     @skip_if_missing_fields("product")
     def _validate_variant_belongs_to_product(self):
         if self.product_variant and self.product_variant.product_id != self.product_id:
             raise ValidationError({"product_variant": _("Product variant must belong to the product.")})
-
-    @skip_if_missing_fields("product")
-    def _validate_unique_primary_image(self):
-        if self.is_primary:
-            qs = ProductImage.objects.filter(product=self.product, is_primary=True)
-            if self.product_variant_id:
-                qs = qs.filter(product_variant=self.product_variant)
-            else:
-                qs = qs.filter(product_variant__isnull=True)
-            if self.pk:
-                qs = qs.exclude(pk=self.pk)
-            if qs.exists():
-                raise ValidationError({"is_primary": _("Only one primary image is allowed per product or variant.")})
 
     @skip_if_missing_fields("product", "product_variant")
     def _validate_variant_usage(self):
@@ -934,6 +1032,26 @@ class ProductImage(ModelValidationMixin, models.Model):
             qs = qs.exclude(pk=self.pk)
         if qs.exists():
             raise ValidationError({"position": _("This display order position is already used for another image.")})
+
+    def _handle_is_primary(self):
+        """
+        Ensures that only one image is marked as primary per product or variant.
+        """
+        qs = ProductImage.objects.filter(product=self.product)
+
+        if self.product_variant_id:
+            qs = qs.filter(product_variant=self.product_variant)
+        else:
+            qs = qs.filter(product_variant__isnull=True)
+
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+
+        if self.is_primary:
+            qs.select_for_update().update(is_primary=False)
+        else:
+            if not qs.filter(is_primary=True).exists():
+                self.is_primary = True
 
 
 class ProductStock(ModelValidationMixin, models.Model):
@@ -1043,3 +1161,12 @@ class ProductStock(ModelValidationMixin, models.Model):
                 {"product_variant": _("Stock entry for single-variant product must not specify a variant.")}
             )
 
+    @skip_if_missing_fields("product")
+    def _validate_unique_stock_per_product(self):
+        qs = self.__class__.objects.filter(product=self.product)
+        if self.product_variant:
+            qs = qs.filter(product_variant=self.product_variant)
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+        if qs.exists():
+            raise ValidationError(_("Stock entry for product/variant already exists."))
