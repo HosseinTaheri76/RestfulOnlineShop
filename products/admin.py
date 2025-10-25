@@ -109,6 +109,7 @@ class ProductAdmin(admin.ModelAdmin):
     list_editable = ["is_active"]
     list_filter = ["is_active"]
     search_fields = ["title", "product_type__title", "product_category__title"]
+    autocomplete_fields = ['product_category', 'product_type']
     inlines = [ProductImageInline, ProductSkuAttributeValueInline]
 
     def get_inlines(self, request, obj):

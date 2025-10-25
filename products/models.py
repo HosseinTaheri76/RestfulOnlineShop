@@ -1,5 +1,5 @@
-from typing import Optional, Set
 from functools import cached_property
+from typing import Optional, Set
 
 from django.db import models, transaction
 from django.db.models import Q, F
@@ -12,6 +12,7 @@ from django.core.exceptions import ValidationError
 from model_utils import FieldTracker
 from mptt.models import MPTTModel, TreeForeignKey, TreeManager
 
+from utils.models.helpers import get_prefetched
 from utils.models.validation import ModelValidationMixin, skip_if_missing_fields
 
 
@@ -638,60 +639,76 @@ class Product(ModelValidationMixin, models.Model):
         super().save(*args, **kwargs)
 
     @cached_property
-    def is_multi_variant(self) -> bool:
-        """True if this product type supports variants."""
-        return bool(self.product_type and self.product_type.has_variants)
-
-    @cached_property
     def primary_variant(self):
-        """Return the product's primary variant, if any."""
-        if not self.is_multi_variant:
-            return None
-        # Efficient: hits DB once
-        return self.variants.filter(is_primary=True).select_related("product").first()
+        if self.product_type.has_variants:
+            variants = get_prefetched(
+                obj=self,
+                attr_name="prefetched_variants",
+                fallback_qs=self.variants(manager='active').all()
+            )
+            return next(filter(lambda variant: variant.is_primary, variants), None)
+        return None
 
     @cached_property
-    def effective_variant(self):
-        """Return the variant that represents this product (primary or self if single)."""
-        return self.primary_variant if self.is_multi_variant else None
-
-    @cached_property
-    def is_available(self) -> bool:
-        """Return True if this product or its primary variant has available stock."""
-        variant = self.effective_variant
-        target = variant or self
-
-        stock = getattr(target, "stocks", None)
-        if not stock:
+    def is_available(self):
+        """
+        Determines if the product (or its primary variant, if applicable) has available stock.
+        Uses prefetched data when available to avoid extra queries.
+        """
+        target = self.primary_variant if self.product_type.has_variants else self
+        if not target:
             return False
 
-        # Optimize: prefetch 'stocks' if using in serializer lists
-        first_stock = stock.first()
-        return bool(first_stock and first_stock.available)
+        stocks = get_prefetched(
+            obj=target,
+            attr_name="prefetched_stocks",
+            fallback_qs=target.stocks.all()
+        )
+        return bool(stocks and getattr(stocks[0], "available", 0) > 0)
 
     @cached_property
     def effective_price(self):
-        """Return the price of the product or its primary variant."""
-        if self.is_multi_variant:
-            variant = self.primary_variant
-            return variant.price if variant else 0
-        return self.price or 0
+        """
+        Returns the product's current sellable price.
+        - For multi-variant products: returns the primary variant's price.
+        - For single-variant products: returns the product's own price.
+        Returns None if no price is applicable or the product is unavailable.
+        """
+        # Choose product or primary variant
+        target = self.primary_variant if self.product_type.has_variants else self
+        if not target:
+            return None
+
+        # Skip unavailable items early
+        if not self.is_available:
+            return None
+
+        # Ensure price attribute exists and is valid
+        return getattr(target, "price", None)
 
     @cached_property
-    def thumbnail_url(self):
-        """Return the primary image URL for this product (product-level, then variant-level)."""
-        # Try product-level primary image first
-        img = self.images.filter(is_primary=True, product_variant__isnull=True).first()
-        if img and img.image:
-            return img.image.url
+    def primary_image_url(self):
+        images = get_prefetched(
+            obj=self,
+            attr_name="prefetched_images",
+            fallback_qs=self.images.all()
+        )
+        primary_image = next((image for image in images if image.is_primary), None)
+        return primary_image.image.url if primary_image else ""
 
-        # Fallback to primary variant's primary image
-        if self.is_multi_variant and self.primary_variant:
-            img = self.primary_variant.images.filter(is_primary=True).first()
-            if img and img.image:
-                return img.image.url
+    @cached_property
+    def thumbnail_image_url(self):
+        """
+        Returns the URL of the primary image for this product or its primary variant.
+        Prefers product images; falls back to primary variant images if none exist.
+        """
+        product_primary_image = self.primary_image_url
 
-        return None
+        if product_primary_image:
+            return product_primary_image
+        if self.primary_variant:
+            return self.primary_variant.thumbnail_image_url
+        return ""
 
     @skip_if_missing_fields("product_category")
     def _validate_category_is_leaf_node(self):
@@ -796,12 +813,19 @@ class ProductVariant(ModelValidationMixin, models.Model):
 
     @cached_property
     def is_available(self):
-        stock = getattr(self, "stocks", None)
-        if not stock:
-            return False
-        # Optimize: prefetch 'stocks' if using in serializer lists
-        first_stock = stock.first()
-        return bool(first_stock and first_stock.available)
+        stock = getattr(self, 'prefetched_stocks', [])
+        return stock[0].available > 0 if stock else False
+
+    @cached_property
+    def primary_image_url(self):
+        images = get_prefetched(
+            obj=self,
+            attr_name="prefetched_images",
+            fallback_qs=self.images.all()
+        )
+        primary_image = next((image for image in images if image.is_primary), None)
+        return primary_image.image_url if primary_image else ""
+
     # ────────────────────────────────
     # Validations
     # ────────────────────────────────

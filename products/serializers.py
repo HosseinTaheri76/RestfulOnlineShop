@@ -1,137 +1,164 @@
 from django.utils.translation import gettext_lazy as _
-
 from rest_framework import serializers
 
 from . import models
 
 
+# ─────────────────────────────────────────────
+#  Product Image
+# ─────────────────────────────────────────────
+
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.ProductImage
-        fields = ["id", "alt_text", "is_primary", "image"]
+        fields = [
+            "id",
+            "alt_text",
+            "is_primary",
+            "image"
+        ]
 
+
+# ─────────────────────────────────────────────
+#  Product SKU Attribute Value
+# ─────────────────────────────────────────────
 
 class ProductSKUAttributeValueSerializer(serializers.ModelSerializer):
     attribute = serializers.CharField(
+        source="value.product_attribute",
         read_only=True,
         label=_("attribute"),
-        source="value.product_attribute"
     )
     value = serializers.CharField(
+        source="value.value",
         read_only=True,
         label=_("value"),
-        source="value.value"
     )
 
     class Meta:
         model = models.ProductSKUAttributeValue
-        fields = ["id", "attribute", "value"]
+        fields = [
+            "id",
+            "attribute",
+            "value"
+        ]
 
 
-class ProductVariantSerializer(serializers.ModelSerializer):
-    images = ProductImageSerializer(
-        many=True,
-        read_only=True,
-        label=_("images")
-    )
-    is_available = serializers.SerializerMethodField(
-        label=_("is_available"),
-    )
-    specifications = ProductSKUAttributeValueSerializer(
-        many=True,
-        read_only=True,
-        label=_("specification"),
-        source="attribute_values"
-    )
-
-    class Meta:
-        model = models.ProductVariant
-        fields = ["id", "sku", "title", "price", "is_primary", "is_available", "images", "specifications"]
-
-    @staticmethod
-    def get_is_available(obj):
-        return obj.is_available
-
+# ─────────────────────────────────────────────
+#  Product Category (recursive)
+# ─────────────────────────────────────────────
 
 class ProductCategorySerializer(serializers.ModelSerializer):
-    sub_categories = serializers.SerializerMethodField(label=_("sub categories"), read_only=True)
+    sub_categories = serializers.SerializerMethodField(label=_("sub categories"))
 
     class Meta:
         model = models.ProductCategory
         fields = ["id", "title", "description", "sub_categories"]
 
-    def get_sub_categories(self, product_category):
-        # Use prefetched cache instead of triggering a new query
-        if product_category.level == models.ProductCategory.MAX_LEVEL:
+    def get_sub_categories(self, category):
+        """Return serialized subcategories if not at max depth."""
+        if category.level >= self.Meta.model.MAX_LEVEL:
             return []
 
-        children = getattr(product_category, "_prefetched_objects_cache", {}).get("children")
-
-        if children is None:
-            # fallback if prefetch not applied (e.g. single detail view)
-            children = product_category.children(manager='active').get_queryset()
+        children = getattr(category, "prefetched_children", [])
 
         return ProductCategorySerializer(children, many=True, context=self.context).data
 
 
+# ─────────────────────────────────────────────
+#  Product Variant
+# ─────────────────────────────────────────────
+
+class ProductVariantSerializer(serializers.ModelSerializer):
+    images = ProductImageSerializer(
+        many=True,
+        read_only=True,
+        source="prefetched_images",
+        label=_("images"),
+    )
+    specifications = ProductSKUAttributeValueSerializer(
+        many=True,
+        read_only=True,
+        source="prefetched_attribute_values",
+        label=_("specifications"),
+    )
+
+    class Meta:
+        model = models.ProductVariant
+        fields = [
+            "id",
+            "sku",
+            "title",
+            "price",
+            "is_primary",
+            "is_available",
+            "images",
+            "specifications",
+        ]
+
+
+# ─────────────────────────────────────────────
+#  Product List
+# ─────────────────────────────────────────────
+
 class ProductListSerializer(serializers.ModelSerializer):
-    price = serializers.SerializerMethodField(label=_("price"))
-    is_available = serializers.SerializerMethodField(label=_("is available"))
     thumbnail = serializers.SerializerMethodField(label=_("thumbnail"))
 
+    price = serializers.DecimalField(
+        source="effective_price",
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+        label=_("price"),
+    )
+
     class Meta:
         model = models.Product
-        fields = ["id", "title", "price", "is_available", "thumbnail"]
-
-    @staticmethod
-    def get_price(product):
-        return product.effective_price
-
-    @staticmethod
-    def get_is_available(product):
-        return product.is_available
+        fields = [
+            "id",
+            "title",
+            "price",
+            "is_available",
+            "thumbnail"
+        ]
 
     def get_thumbnail(self, product):
-        image_url = product.thumbnail_url
         request = self.context.get("request")
-        if image_url:
-            return request.build_absolute_uri(image_url)
-        return ""
+        thumbnail = product.thumbnail_image_url
+        if request:
+            return request.build_absolute_uri(thumbnail)
+        return thumbnail
 
+
+# ─────────────────────────────────────────────
+#  Product Detail
+# ─────────────────────────────────────────────
 
 class ProductDetailSerializer(ProductListSerializer):
-
-    images = serializers.SerializerMethodField(
+    images = ProductImageSerializer(
+        many=True,
+        read_only=True,
+        source="prefetched_images",
         label=_("images"),
-        read_only=True,
     )
-    specifications = serializers.SerializerMethodField(
+    specifications = ProductSKUAttributeValueSerializer(
+        many=True,
+        read_only=True,
+        source="prefetched_attribute_values",
         label=_("specifications"),
-        read_only=True,
     )
-    variants = serializers.SerializerMethodField(
-        label=_("variants"),
+    variants = ProductVariantSerializer(
+        many=True,
         read_only=True,
+        source="prefetched_variants",
+        label=_("variants"),
     )
 
-    class Meta:
-        model = models.Product
+    class Meta(ProductListSerializer.Meta):
         fields = ProductListSerializer.Meta.fields + [
             "product_category",
             "description",
             "images",
             "specifications",
-            "variants"
+            "variants",
         ]
-
-    def get_images(self, product):
-        qs = product.images.filter(product_variant__isnull=True)
-        return ProductImageSerializer(qs, many=True, context=self.context).data
-
-    def get_specifications(self, product):
-        qs = product.attribute_values.filter(product_variant__isnull=True)
-        return ProductSKUAttributeValueSerializer(qs, many=True, context=self.context).data
-
-    def get_variants(self, product):
-        qs = product.variants(manager='active').all()
-        return ProductVariantSerializer(qs, many=True, context=self.context).data
