@@ -32,6 +32,7 @@ class ProductSkuAttributeValueInline(admin.TabularInline):
     extra = 0
     show_change_link = True
     can_delete = True
+    autocomplete_fields = ['value', 'product_type_attribute']
 
     def get_exclude(self, request, obj=None):
         """Hide product or variant field depending on context."""
@@ -72,6 +73,18 @@ class ProductStockInline(admin.TabularInline):
 # MAIN ADMINS
 # ─────────────────────────────────────────────
 
+@admin.register(models.ProductAttributeOption)
+class ProductAttributeOptionAdmin(admin.ModelAdmin):
+    model = models.ProductAttributeOption
+    search_fields = ['product_attribute__title', 'value']
+
+
+@admin.register(models.ProductTypeAttribute)
+class ProductTypeAttributeAdmin(admin.ModelAdmin):
+    model = models.ProductTypeAttribute
+    search_fields = ['product_attribute__title', 'product_type__title']
+
+
 @admin.register(models.ProductCategory)
 class ProductCategoryAdmin(mptt_admin.MPTTModelAdmin):
     mptt_level_indent = 20
@@ -92,6 +105,7 @@ class ProductTypeAdmin(admin.ModelAdmin):
     list_filter = ["has_variants"]
     search_fields = ["title"]
     inlines = [ProductTypeAttributeInline]
+    autocomplete_fields = ['product_category', ]
 
 
 @admin.register(models.ProductAttribute)

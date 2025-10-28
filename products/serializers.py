@@ -5,6 +5,33 @@ from . import models
 
 
 # ─────────────────────────────────────────────
+#  Product Attribute Option
+# ─────────────────────────────────────────────
+
+class ProductAttributeOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.ProductAttributeOption
+        fields = ['id', 'value']
+
+
+# ─────────────────────────────────────────────
+#  Product Attribute
+# ─────────────────────────────────────────────
+class ProductAttributeSerializer(serializers.ModelSerializer):
+
+    options = ProductAttributeOptionSerializer(
+        many=True,
+        read_only=True,
+        label=_('options'),
+        source='prefetched_options',
+    )
+
+    class Meta:
+        model = models.ProductAttribute
+        fields = ['id', 'title', 'options']
+
+
+# ─────────────────────────────────────────────
 #  Product Image
 # ─────────────────────────────────────────────
 

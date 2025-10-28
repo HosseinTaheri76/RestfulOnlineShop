@@ -48,7 +48,7 @@ class ProductModelValidationTests(TestCase):
         """A product with variants and no price should pass validation."""
         product = ProductFactory(
             product_type=self.type_with_variants,
-            product_category=self.category,
+            product_category=self.type_with_variants.product_category,
             price=None
         )
         try:
@@ -60,7 +60,7 @@ class ProductModelValidationTests(TestCase):
         """A product without variants and a price should be valid."""
         product = ProductFactory(
             product_type=self.type_without_variants,
-            product_category=self.category,
+            product_category=self.type_without_variants.product_category,
             price=Decimal("49.99"),
             sku='123456'
         )
@@ -107,7 +107,12 @@ class ProductModelValidationTests(TestCase):
 
     def test_slug_is_generated_from_title(self):
         """Ensure slug auto-generates correctly from title."""
-        product = ProductFactory(title="Test Product Slug", slug=None, product_type=self.type_with_variants)
+        product = ProductFactory(
+            title="Test Product Slug",
+            slug=None,
+            product_type=self.type_with_variants,
+            product_category=self.type_with_variants.product_category,
+        )
         product.full_clean()
         product.save()
         self.assertEqual(product.slug, "test-product-slug")

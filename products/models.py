@@ -309,7 +309,17 @@ class ProductType(ModelValidationMixin, models.Model):
         - "Laptop" (no variants)
         - "T-Shirt" (variants by color and size)
     """
-
+    product_category = models.ForeignKey(
+        to=ProductCategory,
+        on_delete=models.CASCADE,
+        related_name="product_types",
+        verbose_name=_("product category"),
+        help_text=_(
+            "Select the main category this product type belongs to. "
+            "Products of this type will usually appear under this category, "
+            "and its attributes will be used to build filters for products within it."
+        ),
+    )
     title = models.CharField(
         max_length=100,
         unique=True,
@@ -737,6 +747,22 @@ class Product(ModelValidationMixin, models.Model):
         if self.pk and self._tracker.has_changed("product_type_id"):
             raise ValidationError({"product_type": _("Cannot change product type after creation.")})
 
+    def _validate_product_type_category(self):
+        # Ensure product’s category aligns with product type’s category
+        type_category = self.product_type.product_category
+        if self.product_category and type_category:
+            # Allow the category or any of its descendants
+            if not (
+                self.product_category == type_category
+                or self.product_category.is_descendant_of(type_category)
+            ):
+                raise ValidationError(
+                    {
+                        "product_category": _(
+                            "Product category must be the same as or a subcategory of the product type's category."
+                        )
+                    }
+                )
 
 class ProductVariant(ModelValidationMixin, models.Model):
     """

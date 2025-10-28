@@ -63,6 +63,7 @@ class ProductTypeFactory(factory.django.DjangoModelFactory):
 
     title = factory.Sequence(lambda n: f"Type {n}")
     has_variants = factory.Faker("boolean")
+    product_category = factory.SubFactory(ProductCategoryFactory)
 
 
 # --------------------------------------------------------

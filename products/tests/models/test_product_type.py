@@ -4,6 +4,7 @@ from django.test import TestCase
 from django.core.exceptions import ValidationError
 
 from products import factories
+from products.factories import ProductCategoryFactory, ProductTypeFactory, ProductFactory
 from products.models import ProductType
 
 
@@ -83,3 +84,42 @@ class ProductTypeModelTests(TestCase):
             product.full_clean()
 
         self.assertIn("Cannot activate product", str(ctx.exception))
+
+class ProductCategoryTypeValidationTests(TestCase):
+    def setUp(self):
+        self.parent_category = ProductCategoryFactory(title="Electronics")
+        self.child_category = ProductCategoryFactory(
+            title="Phones", parent=self.parent_category
+        )
+        self.unrelated_category = ProductCategoryFactory(title="Furniture")
+
+        self.product_type = ProductTypeFactory(product_category=self.parent_category, has_variants=True)
+
+    def test_product_category_same_as_type_category_is_valid(self):
+        product = ProductFactory(
+            product_type=self.product_type,
+            product_category=self.child_category,
+        )
+        product.full_clean()  # should not raise
+
+    def test_product_category_descendant_of_type_category_is_valid(self):
+        product = ProductFactory(
+            product_type=self.product_type,
+            product_category=self.child_category,
+        )
+        product.full_clean()  # should not raise
+
+    def test_product_category_unrelated_to_type_category_is_invalid(self):
+        product = ProductFactory(
+            product_type=self.product_type,
+            product_category=self.unrelated_category,
+        )
+
+        with self.assertRaises(ValidationError) as ctx:
+            product.full_clean()
+
+        self.assertIn("product_category", ctx.exception.error_dict)
+        self.assertIn(
+            "Product category must be the same as or a subcategory of the product type's category.",
+            ctx.exception.error_dict["product_category"][0].message,
+        )

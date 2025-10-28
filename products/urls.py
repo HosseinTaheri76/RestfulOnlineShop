@@ -1,16 +1,36 @@
-from django.urls import path
+"""
+urls.py
 
+URL configuration for the products app.
+"""
+from django.urls import path
 from . import views
 
-from rest_framework.routers import DefaultRouter
+app_name = "products"
 
-app_name = 'products'
-
-router = DefaultRouter()
-
-urlpatterns = []
-
-router.register('categories', views.CategoryViewSet, basename='category')
-router.register('', views.ProductViewSet, basename='product')
-
-urlpatterns += router.urls
+urlpatterns = [
+    # Category endpoints
+    path(
+        "categories/",
+        views.CategoryListView.as_view(),
+        name="category-list",
+    ),
+    # Product endpoints (scoped by category)
+    path(
+        "categories/<slug:product_category_slug>/products/",
+        views.ProductListByCategoryView.as_view(),
+        name="product-list-by-category",
+    ),
+    # Attribute filters by category
+    path(
+        "categories/<slug:product_category_slug>/filters/",
+        views.ProductAttributeOptionListByCategoryView.as_view(),
+        name="attribute-options-by-category",
+    ),
+    # Product detail
+    path(
+        "<slug:product_slug>/",
+        views.ProductDetailView.as_view(),
+        name="product-detail",
+    ),
+]
