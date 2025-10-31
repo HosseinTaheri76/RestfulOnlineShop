@@ -683,10 +683,12 @@ class Product(ModelValidationMixin, models.Model):
         if not self.slug:
             self.slug = slugify(self.title, allow_unicode=True)
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
         """Auto-generate slug from title if not provided."""
         self._set_slug()
         super().save(*args, **kwargs)
+        self._create_required_attributes()
 
     def get_absolute_url(self) -> str:
         """Return absolute URL."""
@@ -808,6 +810,42 @@ class Product(ModelValidationMixin, models.Model):
                     }
                 )
 
+    def _create_required_attributes(self):
+        """
+        Ensure all required PRODUCT-scope attributes exist.
+        These apply to the product itself, not its variants.
+        """
+        required_attr_ids = list(
+            ProductTypeAttribute.objects.filter(
+                required=True,
+                product_type=self.product_type,
+                product_attribute__scope=ProductAttribute.Scope.PRODUCT,
+            ).values_list("id", flat=True)
+        )
+
+        if not required_attr_ids:
+            return
+
+        existing_attr_ids = set(
+            ProductSKUAttributeValue.objects.filter(
+                product=self,
+                product_variant__isnull=True,
+                product_type_attribute_id__in=required_attr_ids,
+            ).values_list("product_type_attribute_id", flat=True)
+        )
+        missing_attr_ids = set(required_attr_ids) - existing_attr_ids
+
+        if not missing_attr_ids:
+            return
+
+        ProductSKUAttributeValue.objects.bulk_create([
+            ProductSKUAttributeValue(
+                product=self,
+                product_type_attribute_id=attr_id,
+            )
+            for attr_id in missing_attr_ids
+        ])
+
 
 class ProductVariant(ModelValidationMixin, models.Model):
     """
@@ -881,6 +919,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
     def save(self, *args, **kwargs):
         self._handle_is_primary()
         super().save(*args, **kwargs)
+        self._create_required_attributes()
 
     @cached_property
     def is_available(self):
@@ -928,6 +967,42 @@ class ProductVariant(ModelValidationMixin, models.Model):
         elif not qs.filter(is_primary=True).exists():
             self.is_primary = True
 
+    def _create_required_attributes(self):
+        """
+        Ensure all required VARIANT-scope attributes exist.
+        These apply to the variant itself, not its product.
+        """
+        required_attr_ids = list(
+            ProductTypeAttribute.objects.filter(
+                required=True,
+                product_type=self.product.product_type,
+                product_attribute__scope=ProductAttribute.Scope.VARIANT,
+            ).values_list("id", flat=True)
+        )
+
+        if not required_attr_ids:
+            return
+
+        existing_attr_ids = set(
+            ProductSKUAttributeValue.objects.filter(
+                product=self.product,
+                product_variant_id=self.pk,
+                product_type_attribute_id__in=required_attr_ids,
+            ).values_list("product_type_attribute_id", flat=True)
+        )
+        missing_attr_ids = set(required_attr_ids) - existing_attr_ids
+
+        if not missing_attr_ids:
+            return
+
+        ProductSKUAttributeValue.objects.bulk_create([
+            ProductSKUAttributeValue(
+                product=self.product,
+                product_variant=self,
+                product_type_attribute_id=attr_id,
+            )
+            for attr_id in missing_attr_ids
+        ])
 
 class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
     """
@@ -961,6 +1036,7 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
 
     value = models.ForeignKey(
         to=ProductAttributeOption,
+        null=True,
         on_delete=models.CASCADE,
         verbose_name=_("attribute option"),
     )
@@ -985,7 +1061,7 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
             "%(attribute)s: %(value)s (%(scope)s)"
         ) % {
             "attribute": self.product_type_attribute.product_attribute.title,
-            "value": self.value.value,
+            "value": self.value.value if self.value else "",
             "scope": f"Variant: {self.product_variant.sku}" if self.product_variant else _("Product-wide"),
         }
 

@@ -1,8 +1,8 @@
 from django.test import TestCase
 from django.core.exceptions import ValidationError
 
-from products import factories
-from products.models import ProductVariant
+from products import factories, models
+from products.models import ProductVariant, ProductAttribute
 
 
 class ProductVariantModelTests(TestCase):
@@ -17,6 +17,18 @@ class ProductVariantModelTests(TestCase):
         # Products
         self.product_with_variants = factories.ProductFactory(product_type=self.type_with_variants)
         self.product_without_variants = factories.ProductFactory(product_type=self.type_without_variants)
+
+        self.variant_attr_required = factories.ProductAttributeFactory.create(
+            scope=ProductAttribute.Scope.VARIANT,
+            title="Color",
+        )
+
+        factories.ProductTypeAttributeFactory.create(
+            product_type=self.type_with_variants,
+            product_attribute=self.variant_attr_required,
+            required=True,
+        )
+
 
     # --- VALID CASES ---
 
@@ -143,3 +155,27 @@ class ProductVariantModelTests(TestCase):
 
         self.assertTrue(v1.is_primary)
         self.assertFalse(v2.is_primary)
+
+
+    def test_create_required_variant_attributes(self):
+        """Ensure required VARIANT-scope attributes are created after variant save."""
+        variant = factories.ProductVariantFactory.create(product=self.product_with_variants)
+
+        variant._create_required_attributes()
+
+        attrs = models.ProductSKUAttributeValue.objects.filter(product_variant=variant)
+        self.assertEqual(attrs.count(), 1)
+        self.assertEqual(
+            attrs.first().product_type_attribute.product_attribute, self.variant_attr_required
+        )
+
+    def test_does_not_duplicate_existing_variant_attributes(self):
+        """Ensure required VARIANT attributes are not duplicated."""
+        variant = factories.ProductVariantFactory.create(product=self.product_with_variants)
+        variant._create_required_attributes()
+        first_count = models.ProductSKUAttributeValue.objects.count()
+
+        variant._create_required_attributes()
+        second_count = models.ProductSKUAttributeValue.objects.count()
+
+        self.assertEqual(first_count, second_count)

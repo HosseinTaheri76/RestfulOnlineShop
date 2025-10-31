@@ -1,4 +1,7 @@
 from django.contrib import admin
+from django.urls.base import reverse
+from django.http.response import HttpResponseRedirect
+from django.utils.translation import gettext_lazy as _
 
 from mptt import admin as mptt_admin
 
@@ -33,7 +36,7 @@ class ProductSkuAttributeValueInline(admin.TabularInline):
     show_change_link = True
     can_delete = True
     autocomplete_fields = ['value', 'product_type_attribute']
-    formset = forms.ProductSKUAttributeValueInlineFormSet
+
 
     def get_exclude(self, request, obj=None):
         """Hide product or variant field depending on context."""
@@ -59,7 +62,8 @@ class ProductImageInline(admin.TabularInline):
 
 class ProductStockInline(admin.TabularInline):
     model = models.ProductStock
-    extra = 0
+    min_num = 1
+    max_num = 1
 
     def get_exclude(self, request, obj=None):
         """Hide product or variant field depending on context."""
@@ -129,16 +133,33 @@ class ProductAdmin(admin.ModelAdmin):
     list_filter = ["is_active"]
     search_fields = ["title", "product_type__title", "product_category__title"]
     autocomplete_fields = ['product_category', 'product_type']
-    inlines = [ProductImageInline, ProductSkuAttributeValueInline]
+    inlines = [ProductImageInline]
 
     def get_inlines(self, request, obj):
-        """Dynamically add variants inline only when needed."""
         inlines = super().get_inlines(request, obj).copy()
+        if obj:
+            inlines.append(ProductSkuAttributeValueInline)
         if obj and obj.product_type.has_variants:
             inlines.append(ProductVariantInline)
         if obj and not obj.product_type.has_variants:
             inlines.insert(0, ProductStockInline)
         return inlines
+
+    def response_add(self, request, obj, post_url_continue=None):
+        """
+        After adding a new product, redirect to its change page
+        so admin can fill in its attributes and variants.
+        """
+        msg = _('The product "%(obj)s" was added successfully. You can now add attributes and variants.') % {
+            "obj": obj
+        }
+
+        self.message_user(request, msg)
+
+        # Redirect to the product's edit page
+        return HttpResponseRedirect(
+            reverse("admin:products_product_change", args=[obj.pk])
+        )
 
 @admin.register(models.ProductVariant)
 class ProductVariantAdmin(admin.ModelAdmin):

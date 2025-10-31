@@ -65,6 +65,18 @@ class ProductTypeFactory(factory.django.DjangoModelFactory):
     has_variants = factory.Faker("boolean")
     product_category = factory.SubFactory(ProductCategoryFactory)
 
+# --------------------------------------------------------
+# Product Brand Factory
+# --------------------------------------------------------
+
+class ProductBrandFactory(factory.django.DjangoModelFactory):
+
+    class Meta:
+        model = models.ProductBrand
+
+    title = factory.Sequence(lambda n: f"Brand {n}")
+    slug = factory.LazyAttribute(lambda o: slugify(o.title))
+
 
 # --------------------------------------------------------
 # Product Attribute Factory
@@ -115,6 +127,7 @@ class ProductFactory(factory.django.DjangoModelFactory):
 
     product_type = factory.SubFactory(ProductTypeFactory)
     product_category = factory.SubFactory(ProductCategoryFactory, is_root=False)
+    product_brand = factory.SubFactory(ProductBrandFactory)
     title = factory.Sequence(lambda n: f"Product {n}")
     slug = factory.LazyAttribute(lambda o: slugify(o.title))
     description = factory.Faker("paragraph", nb_sentences=2)

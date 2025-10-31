@@ -271,6 +271,8 @@ class ProductCompareSerializer(serializers.Serializer):
         for product in products:
             # Product-level attributes (apply to all variants)
             for pav in product.prefetched_attribute_values:
+                if not pav.value:
+                    continue
                 attr_title = pav.value.product_attribute.title
                 attr_value = pav.value.value
                 attribute_map.setdefault(attr_title, {})[product.id] = attr_value
@@ -278,6 +280,8 @@ class ProductCompareSerializer(serializers.Serializer):
             # Variant-level attributes (specific to SKUs)
             for variant in product.prefetched_variants:
                 for pav in variant.prefetched_attribute_values:
+                    if not pav.value:
+                        continue
                     attr_title = pav.value.product_attribute.title
                     attr_value = pav.value.value
                     product_attrs = attribute_map.setdefault(attr_title, {})

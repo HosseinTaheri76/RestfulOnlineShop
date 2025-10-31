@@ -7,6 +7,9 @@ from products.factories import (
     ProductFactory,
     ProductTypeFactory,
     ProductCategoryFactory,
+    ProductAttributeFactory,
+    ProductVariantFactory,
+    ProductTypeAttributeFactory
 )
 
 
@@ -17,6 +20,25 @@ class ProductModelValidationTests(TestCase):
         self.category = ProductCategoryFactory()
         self.type_with_variants = ProductTypeFactory(has_variants=True)
         self.type_without_variants = ProductTypeFactory(has_variants=False)
+        self.product_attr_required = ProductAttributeFactory.create(
+            scope=models.ProductAttribute.Scope.PRODUCT,
+            title="CPU",
+        )
+        self.variant_attr_required = ProductAttributeFactory.create(
+            scope=models.ProductAttribute.Scope.VARIANT,
+            title="Storage",
+        )
+        ProductTypeAttributeFactory.create(
+            product_type=self.type_with_variants,
+            product_attribute=self.product_attr_required,
+            required=True,
+        )
+        ProductTypeAttributeFactory.create(
+            product_type=self.type_with_variants,
+            product_attribute=self.variant_attr_required,
+            required=True,
+        )
+        self.product = ProductFactory.create(product_type=self.type_with_variants)
 
     def test_product_with_variants_must_not_have_price(self):
         """A product with variants should not have a price value."""
@@ -116,3 +138,40 @@ class ProductModelValidationTests(TestCase):
         product.full_clean()
         product.save()
         self.assertEqual(product.slug, "test-product-slug")
+
+    def test_create_required_product_attributes(self):
+        """Ensure required PRODUCT-scope attributes are created after product save."""
+        self.product._create_required_attributes()
+
+        attrs = models.ProductSKUAttributeValue.objects.filter(
+            product=self.product, product_variant__isnull=True
+        )
+        self.assertEqual(attrs.count(), 1)
+        self.assertEqual(
+            attrs.first().product_type_attribute.product_attribute, self.product_attr_required
+        )
+
+    def test_does_not_duplicate_existing_attributes(self):
+        """Ensure required attributes are not created twice."""
+        # Call once
+        self.product._create_required_attributes()
+        count_first = models.ProductSKUAttributeValue.objects.count()
+
+        # Call again
+        self.product._create_required_attributes()
+        count_second = models.ProductSKUAttributeValue.objects.count()
+
+        self.assertEqual(count_first, count_second)
+
+    def test_product_variant_primary_handling(self):
+        """Ensure the first variant becomes primary automatically."""
+
+        variant1 = ProductVariantFactory.create(product=self.product)
+        self.assertTrue(variant1.is_primary)
+
+        variant2 = ProductVariantFactory.create(product=self.product, is_primary=True)
+        variant1.refresh_from_db()
+        variant2.refresh_from_db()
+
+        self.assertFalse(variant1.is_primary)
+        self.assertTrue(variant2.is_primary)
