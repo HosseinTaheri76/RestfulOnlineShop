@@ -2,7 +2,7 @@ from django.contrib import admin
 
 from mptt import admin as mptt_admin
 
-from products import models
+from products import models, forms
 
 
 # ─────────────────────────────────────────────
@@ -33,6 +33,7 @@ class ProductSkuAttributeValueInline(admin.TabularInline):
     show_change_link = True
     can_delete = True
     autocomplete_fields = ['value', 'product_type_attribute']
+    formset = forms.ProductSKUAttributeValueInlineFormSet
 
     def get_exclude(self, request, obj=None):
         """Hide product or variant field depending on context."""
@@ -98,6 +99,10 @@ class ProductCategoryAdmin(mptt_admin.MPTTModelAdmin):
     def get_queryset(self, request):
         return super().get_queryset(request).select_related("parent")
 
+@admin.register(models.ProductBrand)
+class ProductBrandAdmin(admin.ModelAdmin):
+    search_fields = ['title', ]
+    prepopulated_fields = {"slug": ("title",)}
 
 @admin.register(models.ProductType)
 class ProductTypeAdmin(admin.ModelAdmin):
@@ -134,7 +139,6 @@ class ProductAdmin(admin.ModelAdmin):
         if obj and not obj.product_type.has_variants:
             inlines.insert(0, ProductStockInline)
         return inlines
-
 
 @admin.register(models.ProductVariant)
 class ProductVariantAdmin(admin.ModelAdmin):

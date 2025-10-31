@@ -8,9 +8,11 @@ to ensure minimal database hits and clean separation of concerns.
 """
 
 from django.shortcuts import get_object_or_404
-from rest_framework import generics
 
-from . import models, queries, pagination, serializers, filter_backends
+from rest_framework.response import Response
+from rest_framework import generics, status
+
+from . import models, queries, pagination, serializers
 
 
 # ───────────────────────────────────────────────
@@ -23,13 +25,15 @@ class CategoryContextMixin:
     Used by all category-based views.
     """
 
+    _category_cache = None
+
     category_url_kwarg = "product_category_slug"
 
     def get_category(self) -> models.ProductCategory:
         """
         Resolve and cache the active category by slug.
         """
-        if not hasattr(self, "_category_cache"):
+        if self._category_cache is None:
             slug = self.kwargs[self.category_url_kwarg]
             self._category_cache = get_object_or_404(models.ProductCategory.active.all(), slug=slug)
 
@@ -60,7 +64,6 @@ class ProductListByCategoryView(CategoryContextMixin, generics.ListAPIView):
     """
     serializer_class = serializers.ProductListSerializer
     pagination_class = pagination.ProductListPagination
-    filter_backends = [filter_backends.AttributeOptionFilterBackend, ]
 
     def get_queryset(self):
         category = self.get_category()
@@ -93,3 +96,13 @@ class ProductAttributeOptionListByCategoryView(CategoryContextMixin, generics.Li
     def get_queryset(self):
         category = self.get_category()
         return queries.get_attribute_options_by_category(category)
+
+
+class ProductCompareView(generics.GenericAPIView):
+
+    serializer_class = serializers.ProductCompareSerializer
+
+    def get(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)

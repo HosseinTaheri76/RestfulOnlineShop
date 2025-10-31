@@ -5,6 +5,7 @@ from django.db import models, transaction
 from django.db.models import Q, F
 from django.db.models.aggregates import Max
 from django.db.models.functions.text import Lower
+from django.urls.base import reverse
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
@@ -152,6 +153,9 @@ class ProductCategory(ModelValidationMixin, MPTTModel):
         # handle activation/deactivation and re-parent cleanup (uses in-memory tracker)
         self._handle_activation()
         super().save(*args, **kwargs)
+
+    def get_absolute_url(self) -> str:
+        return reverse('products:product-list-by-category', kwargs={"product_category_slug": self.slug})
 
     @transaction.atomic
     def delete(self, *args, **kwargs) -> None:
@@ -368,6 +372,36 @@ class ProductType(ModelValidationMixin, models.Model):
         return self.title
 
 
+class ProductBrand(models.Model):
+    title = models.CharField(
+        max_length=128,
+        unique=True,
+        verbose_name=_("title"),
+    )
+    slug = models.SlugField(
+        max_length=128,
+        allow_unicode=True,
+        unique=True,
+        blank=True,
+        verbose_name=_("slug"),
+    )
+
+    class Meta:
+        verbose_name = _("Brand")
+        verbose_name_plural = _("Brands")
+
+    def __str__(self):
+        return self.title
+
+    def _set_slug(self) -> None:
+        if not self.slug:
+            self.slug = slugify(self.title, allow_unicode=True)
+
+    def save(self, *args, **kwargs):
+        self._set_slug()
+        super().save(*args, **kwargs)
+
+
 class ProductAttribute(ModelValidationMixin, models.Model):
     """
     Defines a characteristic that can describe a product or a variant.
@@ -578,6 +612,12 @@ class Product(ModelValidationMixin, models.Model):
         verbose_name=_("product category"),
         help_text=_("The hierarchical category this product belongs to."),
     )
+    product_brand = models.ForeignKey(
+        to=ProductBrand,
+        on_delete=models.PROTECT,
+        related_name="products",
+        verbose_name=_("product brand"),
+    )
     title = models.CharField(
         max_length=255,
         unique=True,
@@ -648,6 +688,10 @@ class Product(ModelValidationMixin, models.Model):
         self._set_slug()
         super().save(*args, **kwargs)
 
+    def get_absolute_url(self) -> str:
+        """Return absolute URL."""
+        return reverse('products:product-detail', kwargs={'product_slug': self.slug})
+
     @cached_property
     def primary_variant(self):
         if self.product_type.has_variants:
@@ -717,7 +761,7 @@ class Product(ModelValidationMixin, models.Model):
         if product_primary_image:
             return product_primary_image
         if self.primary_variant:
-            return self.primary_variant.thumbnail_image_url
+            return self.primary_variant.primary_image_url
         return ""
 
     @skip_if_missing_fields("product_category")
@@ -753,8 +797,8 @@ class Product(ModelValidationMixin, models.Model):
         if self.product_category and type_category:
             # Allow the category or any of its descendants
             if not (
-                self.product_category == type_category
-                or self.product_category.is_descendant_of(type_category)
+                    self.product_category == type_category
+                    or self.product_category.is_descendant_of(type_category)
             ):
                 raise ValidationError(
                     {
@@ -763,6 +807,7 @@ class Product(ModelValidationMixin, models.Model):
                         )
                     }
                 )
+
 
 class ProductVariant(ModelValidationMixin, models.Model):
     """

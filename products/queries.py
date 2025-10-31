@@ -88,7 +88,10 @@ def get_product_queryset(prefetch_attribute_values: bool = False) -> QuerySet:
     )
 
     # Return optimized queryset
-    return Product.active.select_related("product_type", "product_category").prefetch_related(*product_prefetches)
+    return (
+        Product.active.select_related("product_type", "product_category", "product_brand").
+        prefetch_related(*product_prefetches)
+    )
 
 # ───────────────────────────────────────────────────────────────
 # CATEGORIES
