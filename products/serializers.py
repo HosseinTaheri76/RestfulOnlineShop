@@ -57,13 +57,11 @@ class ProductImageSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────────
 class ProductSKUAttributeValueSerializer(serializers.ModelSerializer):
     attribute = serializers.CharField(
-        source="value.product_attribute",
+        source="product_type_attribute.product_attribute",
         read_only=True,
         label=_("attribute"),
     )
-    value = serializers.CharField(
-        source="value.value",
-        read_only=True,
+    value = serializers.SerializerMethodField(
         label=_("value"),
     )
 
@@ -71,6 +69,11 @@ class ProductSKUAttributeValueSerializer(serializers.ModelSerializer):
         model = models.ProductSKUAttributeValue
         fields = ["id", "attribute", "value"]
         read_only_fields = fields
+
+    def get_value(self, obj):
+        if obj.value is None:
+            return ""
+        return obj.value.value
 
 
 # ─────────────────────────────────────────────

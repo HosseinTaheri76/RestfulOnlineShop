@@ -17,16 +17,11 @@ urlpatterns = [
     ),
     # Product endpoints (scoped by category)
     path(
-        "categories/<slug:product_category_slug>/products/",
+        "categories/<slug:product_category_slug>/",
         views.ProductListByCategoryView.as_view(),
         name="product-list-by-category",
     ),
     # Attribute filters by category
-    path(
-        "categories/<slug:product_category_slug>/filters/",
-        views.ProductAttributeOptionListByCategoryView.as_view(),
-        name="attribute-options-by-category",
-    ),
     path(
         "compare/",
         views.ProductCompareView.as_view(),

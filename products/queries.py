@@ -9,10 +9,11 @@ These functions are designed to:
 - Minimize redundant database hits for related models (stocks, variants, images, attributes, etc.).
 """
 
-from django.db.models import Prefetch, QuerySet
-
+from django.db.models import Prefetch, QuerySet, Case, When, OuterRef, Subquery, F, DecimalField
+from django.db.models.aggregates import Max
 
 from . import models
+
 
 # ───────────────────────────────────────────────────────────────
 # PRODUCTS
@@ -63,7 +64,10 @@ def get_product_queryset(prefetch_attribute_values: bool = False) -> QuerySet:
             Prefetch(
                 lookup="attribute_values",
                 to_attr="prefetched_attribute_values",
-                queryset=ProductSKUAttributeValue.objects.select_related("value__product_attribute")
+                queryset=ProductSKUAttributeValue.objects.select_related(
+                    "value__product_attribute",
+                    "product_type_attribute__product_attribute"
+                )
             )
         )
         product_prefetches.append(
@@ -73,7 +77,10 @@ def get_product_queryset(prefetch_attribute_values: bool = False) -> QuerySet:
                 queryset=(
                     ProductSKUAttributeValue.objects.
                     filter(product_variant__isnull=True).
-                    select_related("value__product_attribute")
+                    select_related(
+                        "value__product_attribute",
+                        "product_type_attribute__product_attribute"
+                    )
                 ),
             )
         )
@@ -87,11 +94,27 @@ def get_product_queryset(prefetch_attribute_values: bool = False) -> QuerySet:
         )
     )
 
+    primary_variant_price = (
+        ProductVariant.active
+        .filter(product=OuterRef("pk"), is_primary=True)
+        .values("price")[:1]
+    )
+
+
     # Return optimized queryset
     return (
-        Product.active.select_related("product_type", "product_category", "product_brand").
-        prefetch_related(*product_prefetches)
+        Product.active
+        .select_related("product_type", "product_category", "product_brand")
+        .prefetch_related(*product_prefetches)
+        .annotate(
+            effective_price=Case(
+                When(price__isnull=False, then=F("price")),
+                default=Subquery(primary_variant_price),
+                output_field=DecimalField(),
+            )
+        )
     )
+
 
 # ───────────────────────────────────────────────────────────────
 # CATEGORIES
@@ -120,6 +143,7 @@ def get_categories_for_tree_view() -> QuerySet:
 
     return active.filter(parent__isnull=True).prefetch_related(prefetched_children)
 
+
 # ───────────────────────────────────────────────────────────────
 # PRODUCTS BY CATEGORY
 # ───────────────────────────────────────────────────────────────
@@ -141,6 +165,7 @@ def get_products_by_category(product_category: models.ProductCategory) -> QueryS
     )
 
     return get_product_queryset(prefetch_attribute_values=False).filter(product_category_id__in=category_ids)
+
 
 # ───────────────────────────────────────────────────────────────
 # ATTRIBUTE OPTIONS BY CATEGORY

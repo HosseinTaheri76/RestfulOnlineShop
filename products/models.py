@@ -1,5 +1,5 @@
-from functools import cached_property
 from typing import Optional, Set
+from functools import cached_property
 
 from django.db import models, transaction
 from django.db.models import Q, F
@@ -815,7 +815,7 @@ class Product(ModelValidationMixin, models.Model):
         Ensure all required PRODUCT-scope attributes exist.
         These apply to the product itself, not its variants.
         """
-        required_attr_ids = list(
+        required_attr_ids = set(
             ProductTypeAttribute.objects.filter(
                 required=True,
                 product_type=self.product_type,
@@ -833,7 +833,7 @@ class Product(ModelValidationMixin, models.Model):
                 product_type_attribute_id__in=required_attr_ids,
             ).values_list("product_type_attribute_id", flat=True)
         )
-        missing_attr_ids = set(required_attr_ids) - existing_attr_ids
+        missing_attr_ids = required_attr_ids - existing_attr_ids
 
         if not missing_attr_ids:
             return
@@ -972,7 +972,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
         Ensure all required VARIANT-scope attributes exist.
         These apply to the variant itself, not its product.
         """
-        required_attr_ids = list(
+        required_attr_ids = set(
             ProductTypeAttribute.objects.filter(
                 required=True,
                 product_type=self.product.product_type,
@@ -990,7 +990,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
                 product_type_attribute_id__in=required_attr_ids,
             ).values_list("product_type_attribute_id", flat=True)
         )
-        missing_attr_ids = set(required_attr_ids) - existing_attr_ids
+        missing_attr_ids = required_attr_ids - existing_attr_ids
 
         if not missing_attr_ids:
             return
@@ -1003,6 +1003,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
             )
             for attr_id in missing_attr_ids
         ])
+
 
 class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
     """
