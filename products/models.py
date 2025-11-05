@@ -708,19 +708,17 @@ class Product(ModelValidationMixin, models.Model):
     @cached_property
     def is_available(self):
         """
-        Determines if the product (or its primary variant, if applicable) has available stock.
+        Determines if the product (or any of its variants, if applicable) has available stock.
         Uses prefetched data when available to avoid extra queries.
         """
-        target = self.primary_variant if self.product_type.has_variants else self
-        if not target:
+        if self.product_type.has_variants:
+            variants = get_prefetched(obj=self, attr_name="prefetched_variants", fallback_qs=self.variants.all())
+            for variant in variants:
+                if variant.is_available:
+                    return True
             return False
-
-        stocks = get_prefetched(
-            obj=target,
-            attr_name="prefetched_stocks",
-            fallback_qs=target.stocks.all()
-        )
-        return bool(stocks and getattr(stocks[0], "available", 0) > 0)
+        stocks = get_prefetched(obj=self, attr_name="prefetched_stocks", fallback_qs=self.stocks.all())
+        return bool(stocks) and stocks[0].available > 0
 
     @cached_property
     def effective_price(self):
