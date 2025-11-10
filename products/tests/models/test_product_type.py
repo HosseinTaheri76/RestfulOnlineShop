@@ -85,6 +85,21 @@ class ProductTypeModelTests(TestCase):
 
         self.assertIn("Cannot activate product", str(ctx.exception))
 
+    def test_cannot_change_product_category_of_type_with_products(self):
+        factories.ProductFactory(
+            product_type=self.type_without_variants,
+            product_category=self.type_without_variants.product_category,
+        )
+        self.type_without_variants.product_category = self.in_active_category
+
+        with self.assertRaises(ValidationError) as ctx:
+            self.type_without_variants.clean()
+
+        exc_str = "Product category cannot be changed because products are linked with this type."
+
+        self.assertIn(exc_str, str(ctx.exception))
+
+
 class ProductCategoryTypeValidationTests(TestCase):
     def setUp(self):
         self.parent_category = ProductCategoryFactory(title="Electronics")
@@ -123,3 +138,4 @@ class ProductCategoryTypeValidationTests(TestCase):
             "Product category must be the same as or a subcategory of the product type's category.",
             ctx.exception.error_dict["product_category"][0].message,
         )
+

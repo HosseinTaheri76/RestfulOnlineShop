@@ -30,13 +30,17 @@ class ProductVariantInline(admin.TabularInline):
     min_num = 1
 
 
+class ProductTypeInline(admin.TabularInline):
+    model = models.ProductType
+    extra = 1
+
+
 class ProductSkuAttributeValueInline(admin.TabularInline):
     model = models.ProductSKUAttributeValue
     extra = 0
     show_change_link = True
     can_delete = True
     autocomplete_fields = ['value', 'product_type_attribute']
-
 
     def get_exclude(self, request, obj=None):
         """Hide product or variant field depending on context."""
@@ -99,14 +103,17 @@ class ProductCategoryAdmin(mptt_admin.MPTTModelAdmin):
     search_fields = ["title", "slug"]
     autocomplete_fields = ['parent', ]
     prepopulated_fields = {"slug": ("title",)}
+    inlines = [ProductTypeInline, ]
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related("parent")
+
 
 @admin.register(models.ProductBrand)
 class ProductBrandAdmin(admin.ModelAdmin):
     search_fields = ['title', ]
     prepopulated_fields = {"slug": ("title",)}
+
 
 @admin.register(models.ProductType)
 class ProductTypeAdmin(admin.ModelAdmin):
@@ -160,6 +167,7 @@ class ProductAdmin(admin.ModelAdmin):
         return HttpResponseRedirect(
             reverse("admin:products_product_change", args=[obj.pk])
         )
+
 
 @admin.register(models.ProductVariant)
 class ProductVariantAdmin(admin.ModelAdmin):

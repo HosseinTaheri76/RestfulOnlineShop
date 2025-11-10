@@ -13,7 +13,7 @@ from django.core.exceptions import ValidationError
 from model_utils import FieldTracker
 from mptt.models import MPTTModel, TreeForeignKey, TreeManager
 
-from utils.models.helpers import get_prefetched
+from utils.models.helpers import SlugModelMixin, get_prefetched
 from utils.models.validation import ModelValidationMixin, skip_if_missing_fields
 
 
@@ -74,7 +74,7 @@ class ActiveProductVariantManager(models.Manager):
         )
 
 
-class ProductCategory(ModelValidationMixin, MPTTModel):
+class ProductCategory(ModelValidationMixin, SlugModelMixin, MPTTModel):
     """
     MPTT-backed product category with:
       - maximum tree depth enforced (levels 0..2 allowed)
@@ -99,12 +99,6 @@ class ProductCategory(ModelValidationMixin, MPTTModel):
         max_length=255,
         verbose_name=_("title")
     )
-    slug = models.SlugField(
-        blank=True,
-        unique=True,
-        allow_unicode=True,
-        verbose_name=_("slug")
-    )
     description = models.TextField(
         blank=True,
         max_length=500,
@@ -127,7 +121,7 @@ class ProductCategory(ModelValidationMixin, MPTTModel):
         verbose_name_plural = _("Product categories")
         constraints = [
             models.CheckConstraint(
-                name="category_depth_less_than_equal_3", check=Q(level__lte=2)
+                name="category_level_less_than_equal_2", check=Q(level__lte=2)
             )
         ]
 
@@ -145,11 +139,8 @@ class ProductCategory(ModelValidationMixin, MPTTModel):
     def save(self, *args, **kwargs) -> None:
         """
         On save:
-          - ensure slug
-          - validate (full_clean) so depth checks run before propagation
           - run activation propagation logic
         """
-        self._set_slug()
         # handle activation/deactivation and re-parent cleanup (uses in-memory tracker)
         self._handle_activation()
         super().save(*args, **kwargs)
@@ -168,13 +159,6 @@ class ProductCategory(ModelValidationMixin, MPTTModel):
             # call on the node to compute and bulk-update ancestors
             self._deactivate_ancestors_if_has_no_active_descendants(self)
         super().delete(*args, **kwargs)
-
-    # ----------------------------
-    # Helpers: slug & depth
-    # ----------------------------
-    def _set_slug(self) -> None:
-        if not self.slug:
-            self.slug = slugify(self.title, allow_unicode=True)
 
     def _validate_depth(self) -> None:
         """
@@ -341,7 +325,7 @@ class ProductType(ModelValidationMixin, models.Model):
         ),
     )
 
-    _tracker = FieldTracker(fields=["has_variants", ])
+    _tracker = FieldTracker(fields=["has_variants", "product_category"])
 
     def _validate_has_variants(self):
         """
@@ -363,6 +347,15 @@ class ProductType(ModelValidationMixin, models.Model):
                 )
             })
 
+    def _validate_product_category_change(self):
+        if self.pk and self._tracker.has_changed("product_category") and self.products.exists():
+            raise ValidationError(
+                {'product_category': _(
+                    "Product category cannot be changed "
+                    "because products are linked with this type."
+                )}
+            )
+
     class Meta:
         verbose_name = _("Product Type")
         verbose_name_plural = _("Product Types")
@@ -372,18 +365,11 @@ class ProductType(ModelValidationMixin, models.Model):
         return self.title
 
 
-class ProductBrand(models.Model):
+class ProductBrand(SlugModelMixin, models.Model):
     title = models.CharField(
         max_length=128,
         unique=True,
         verbose_name=_("title"),
-    )
-    slug = models.SlugField(
-        max_length=128,
-        allow_unicode=True,
-        unique=True,
-        blank=True,
-        verbose_name=_("slug"),
     )
 
     class Meta:
@@ -392,14 +378,6 @@ class ProductBrand(models.Model):
 
     def __str__(self):
         return self.title
-
-    def _set_slug(self) -> None:
-        if not self.slug:
-            self.slug = slugify(self.title, allow_unicode=True)
-
-    def save(self, *args, **kwargs):
-        self._set_slug()
-        super().save(*args, **kwargs)
 
 
 class ProductAttribute(ModelValidationMixin, models.Model):
@@ -484,7 +462,7 @@ class ProductAttribute(ModelValidationMixin, models.Model):
             })
 
 
-class ProductAttributeOption(models.Model):
+class ProductAttributeOption(ModelValidationMixin, models.Model):
     """
     Represents a selectable value (option) for a product attribute.
 
@@ -507,6 +485,8 @@ class ProductAttributeOption(models.Model):
         verbose_name=_("value"),
     )
 
+    _tracker = FieldTracker(fields=["product_attribute", "value", ])
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -518,6 +498,10 @@ class ProductAttributeOption(models.Model):
 
     def __str__(self):
         return f"{self.product_attribute.title}: {self.value}"
+
+    def _validate_change(self):
+        if self.pk and self._tracker.changed() and self.productskuattributevalue_set.exists():
+            raise ValidationError(_("Cannot modify an option that is in use by products"))
 
 
 class ProductTypeAttribute(ModelValidationMixin, models.Model):
@@ -553,6 +537,8 @@ class ProductTypeAttribute(ModelValidationMixin, models.Model):
         ),
     )
 
+    _tracker = FieldTracker(fields=["product_type", "product_attribute", ])
+
     class Meta:
         verbose_name = _("Type Attribute")
         verbose_name_plural = _("Type Attributes")
@@ -571,6 +557,10 @@ class ProductTypeAttribute(ModelValidationMixin, models.Model):
     # Validation Logic
     # ------------------------------------------------------------------
 
+    def _validate_change(self):
+        if self.pk and self._tracker.changed() and self.productskuattributevalue_set.exists():
+            raise ValidationError(_("Cannot modify a ProductTypeAttribute that is in use by products"))
+
     @skip_if_missing_fields('product_type', 'product_attribute')
     def _validate_scope_compatibility(self):
         """Ensure variant attributes aren't assigned to non-variant product types."""
@@ -585,7 +575,7 @@ class ProductTypeAttribute(ModelValidationMixin, models.Model):
             })
 
 
-class Product(ModelValidationMixin, models.Model):
+class Product(ModelValidationMixin, SlugModelMixin, models.Model):
     """
     Represents a sellable product in the catalog.
 
@@ -635,14 +625,6 @@ class Product(ModelValidationMixin, models.Model):
             "Leave blank if this product has variants; each variant will define its own SKU."
         ),
     )
-    slug = models.SlugField(
-        max_length=255,
-        unique=True,
-        blank=True,
-        allow_unicode=True,
-        verbose_name=_("slug"),
-        help_text=_("Unique identifier used in URLs. Auto-generated from title if left blank."),
-    )
     price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -679,14 +661,8 @@ class Product(ModelValidationMixin, models.Model):
     def __str__(self):
         return self.title
 
-    def _set_slug(self) -> None:
-        if not self.slug:
-            self.slug = slugify(self.title, allow_unicode=True)
-
     @transaction.atomic
     def save(self, *args, **kwargs):
-        """Auto-generate slug from title if not provided."""
-        self._set_slug()
         super().save(*args, **kwargs)
         self._create_required_attributes()
 
@@ -921,7 +897,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
 
     @cached_property
     def is_available(self):
-        stock = getattr(self, 'prefetched_stocks', [])
+        stock = get_prefetched(self, 'prefetched_stocks', self.stocks.all())
         return stock[0].available > 0 if stock else False
 
     @cached_property
@@ -1029,14 +1005,14 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
 
     product_type_attribute = models.ForeignKey(
         to=ProductTypeAttribute,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         verbose_name=_("type attribute"),
     )
 
     value = models.ForeignKey(
         to=ProductAttributeOption,
         null=True,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         verbose_name=_("attribute option"),
     )
 
