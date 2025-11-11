@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'django_filters',
     'mptt',
 
+    'otp.apps.OtpConfig',
     'accounts.apps.AccountsConfig',
     'products.apps.ProductsConfig',
 ]
