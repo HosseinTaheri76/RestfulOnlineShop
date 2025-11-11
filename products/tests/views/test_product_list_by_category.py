@@ -2,7 +2,6 @@ from django.urls import reverse
 from django.db.models import Min, Max
 from django.test import TestCase
 from rest_framework.test import APIClient
-from rest_framework import status
 
 from products import models, factories
 
@@ -16,27 +15,52 @@ class ProductListByCategoryViewTests(TestCase):
         self.subcategory = factories.ProductCategoryFactory(parent=self.category, is_root=False)
 
         # Create a product type
-        self.product_type = factories.ProductTypeFactory(product_category=self.subcategory, has_variants=False)
+        self.product_type = factories.ProductTypeFactory(product_category=self.subcategory, has_variants=True)
 
         # Create a few products in this category
         self.product1 = factories.ProductFactory(
             product_category=self.subcategory,
             product_type=self.product_type,
-            price=100
         )
+        self.product_1_primary_variant = factories.ProductVariantFactory(
+            product=self.product1,
+            price=1000,
+        )
+
         self.product2 = factories.ProductFactory(
             product_category=self.subcategory,
             product_type=self.product_type,
-            price=200
+        )
+        self.product_2_primary_variant = factories.ProductVariantFactory(
+            product=self.product2,
+            price=2000,
         )
 
         # Create stocks (both available)
-        factories.ProductStockFactory(product=self.product1, quantity=10, reserved=2)
-        factories.ProductStockFactory(product=self.product2, quantity=5, reserved=0)
+        factories.ProductStockFactory(
+            product_variant=self.product_1_primary_variant,
+            product=self.product1,
+            quantity=10,
+            reserved=2
+        )
+        factories.ProductStockFactory(
+            product_variant=self.product_2_primary_variant,
+            product=self.product2,
+            quantity=5,
+            reserved=0
+        )
 
         # Add filterable attributes
-        self.attr_color = factories.ProductAttributeFactory(title="Color", filterable=True)
-        self.attr_storage = factories.ProductAttributeFactory(title="Storage", filterable=True)
+        self.attr_color = factories.ProductAttributeFactory(
+            title="Color",
+            filterable=True,
+            scope=models.ProductAttribute.Scope.VARIANT
+        )
+        self.attr_storage = factories.ProductAttributeFactory(
+            title="Storage",
+            filterable=True,
+            scope=models.ProductAttribute.Scope.VARIANT
+        )
 
         # Link attributes to product type
         self.ta_color = factories.ProductTypeAttributeFactory(
@@ -57,21 +81,25 @@ class ProductListByCategoryViewTests(TestCase):
         # Attach attributes to products
         factories.ProductSKUAttributeValueFactory(
             product=self.product1,
+            product_variant=self.product_1_primary_variant,
             product_type_attribute=self.ta_color,
             value=self.red
         )
         factories.ProductSKUAttributeValueFactory(
             product=self.product1,
+            product_variant=self.product_1_primary_variant,
             product_type_attribute=self.ta_storage,
             value=self.storage_128
         )
         factories.ProductSKUAttributeValueFactory(
             product=self.product2,
+            product_variant=self.product_2_primary_variant,
             product_type_attribute=self.ta_color,
             value=self.blue
         )
         factories.ProductSKUAttributeValueFactory(
             product=self.product2,
+            product_variant=self.product_2_primary_variant,
             product_type_attribute=self.ta_storage,
             value=self.storage_256
         )
@@ -91,12 +119,8 @@ class ProductListByCategoryViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         data = response.json()
-
-        min_expected = models.Product.objects.aggregate(min_price=Min("price"))["min_price"]
-        max_expected = models.Product.objects.aggregate(max_price=Max("price"))["max_price"]
-
-        self.assertEqual(float(data["min_price"]), float(min_expected))
-        self.assertEqual(float(data["max_price"]), float(max_expected))
+        self.assertEqual(float(data["min_price"]), float(1000))
+        self.assertEqual(float(data["max_price"]), float(2000))
 
     def test_returns_filterable_attributes_for_category(self):
         response = self.client.get(self.url)

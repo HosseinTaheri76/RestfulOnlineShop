@@ -23,6 +23,10 @@ class ModelValidationMixin:
                     raise ValidationError({'price': "Price must be positive."})
     """
 
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     def clean(self):
         # Run parent model validation first
         super().clean()

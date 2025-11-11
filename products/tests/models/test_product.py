@@ -42,9 +42,9 @@ class ProductModelValidationTests(TestCase):
 
     def test_product_with_variants_must_not_have_price(self):
         """A product with variants should not have a price value."""
-        product = ProductFactory(
+        product = ProductFactory.build(
             product_type=self.type_with_variants,
-            product_category=self.category,
+            product_category=self.type_with_variants.product_category,
             price=Decimal("99.99")
         )
 
@@ -55,9 +55,9 @@ class ProductModelValidationTests(TestCase):
 
     def test_product_without_variants_must_have_price(self):
         """A product without variants must define a price."""
-        product = ProductFactory(
+        product = ProductFactory.build(
             product_type=self.type_without_variants,
-            product_category=self.category,
+            product_category=self.type_without_variants.product_category,
             price=None
         )
 
@@ -95,35 +95,40 @@ class ProductModelValidationTests(TestCase):
         """ActiveProductManager should only return products and categories that are active."""
         # active category + active product → should appear
         active_category = ProductCategoryFactory(is_active=True)
+        product_type = ProductTypeFactory(product_category=active_category, has_variants=False)
         active_product = ProductFactory(
             product_category=active_category,
             is_active=True,
             price=Decimal("10.00"),
-            product_type=self.type_without_variants,
+            product_type=product_type,
         )
+
+        active_products = models.Product.active.all()
+
+        # Assert
+        self.assertIn(active_product, active_products)
 
         # inactive product → should not appear
         inactive_product = ProductFactory(
             product_category=active_category,
             is_active=False,
             price=Decimal("10.00"),
-            product_type=self.type_without_variants,
+            product_type=product_type,
         )
+        active_products = models.Product.active.all()
+        self.assertNotIn(inactive_product, active_products)
 
         # inactive category → should not appear
-        inactive_category = ProductCategoryFactory(is_active=False)
         inactive_category_product = ProductFactory(
-            product_category=inactive_category,
+            product_category=active_category,
             is_active=True,
             price=Decimal("10.00"),
-            product_type=self.type_without_variants,
+            product_type=product_type,
         )
-
+        active_category.is_active = False
+        active_category.save()
         # Act
         active_products = models.Product.active.all()
-
-        # Assert
-        self.assertIn(active_product, active_products)
         self.assertNotIn(inactive_product, active_products)
         self.assertNotIn(inactive_category_product, active_products)
 

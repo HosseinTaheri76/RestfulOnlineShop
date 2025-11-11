@@ -40,7 +40,7 @@ class ProductTypeModelTests(TestCase):
         for a product type that already has products.
         """
         product_type = factories.ProductTypeFactory(has_variants=True)
-        factories.ProductFactory(product_type=product_type)
+        factories.ProductFactory(product_type=product_type, product_category=product_type.product_category)
 
         product_type.has_variants = False  # toggle the field
         with self.assertRaises(ValidationError) as ctx:
@@ -57,8 +57,14 @@ class ProductTypeModelTests(TestCase):
         type_without_variants = factories.ProductTypeFactory(has_variants=False)
 
         # Add product to each
-        factories.ProductFactory(product_type=type_with_variants)
-        factories.ProductFactory(product_type=type_without_variants)
+        factories.ProductFactory(
+            product_type=type_with_variants,
+            product_category=type_with_variants.product_category
+        )
+        factories.ProductFactory(
+            product_type=type_without_variants,
+            product_category=type_without_variants.product_category
+        )
 
         # Try to toggle each direction
         type_with_variants.has_variants = False
@@ -77,7 +83,14 @@ class ProductTypeModelTests(TestCase):
 
 
     def test_cannot_activate_product_under_inactive_category(self):
-        product = factories.ProductFactory(product_category=self.in_active_category, is_active=False)
+        category = self.type_with_variants.product_category
+        category.is_active = False
+        category.save()
+        product = factories.ProductFactory(
+            product_type=self.type_with_variants,
+            product_category=category,
+            is_active=False
+        )
         product.is_active = True
 
         with self.assertRaises(ValidationError) as ctx:
@@ -125,7 +138,7 @@ class ProductCategoryTypeValidationTests(TestCase):
         product.full_clean()  # should not raise
 
     def test_product_category_unrelated_to_type_category_is_invalid(self):
-        product = ProductFactory(
+        product = ProductFactory.build(
             product_type=self.product_type,
             product_category=self.unrelated_category,
         )

@@ -3,7 +3,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from products import factories
+from products import factories, models
 
 
 class ProductDetailViewTests(TestCase):
@@ -47,6 +47,7 @@ class ProductDetailViewTests(TestCase):
         self.attribute = factories.ProductAttributeFactory(
             title="Color",
             filterable=True,
+            scope=models.ProductAttribute.Scope.VARIANT
         )
         self.ta = factories.ProductTypeAttributeFactory(product_type=self.type, product_attribute=self.attribute)
 

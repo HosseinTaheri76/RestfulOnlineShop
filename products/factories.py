@@ -141,6 +141,17 @@ class ProductFactory(factory.django.DjangoModelFactory):
             right_digits=2,
             positive=True) if not self.product_type.has_variants else None
 
+    @factory.lazy_attribute
+    def sku(self):
+        if not self.product_type.has_variants:
+            # Generate a unique SKU
+            return f"SKU-{fake.unique.random_int(min=1000, max=9999)}"
+        return None
+
+    @factory.lazy_attribute
+    def product_category(self):
+        return self.product_type.product_category
+
 
 class ProductVariantFactory(factory.django.DjangoModelFactory):
     """

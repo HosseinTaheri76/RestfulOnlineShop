@@ -15,8 +15,14 @@ class ProductVariantModelTests(TestCase):
         self.category = factories.ProductCategoryFactory(is_root=True)
 
         # Products
-        self.product_with_variants = factories.ProductFactory(product_type=self.type_with_variants)
-        self.product_without_variants = factories.ProductFactory(product_type=self.type_without_variants)
+        self.product_with_variants = factories.ProductFactory(
+            product_type=self.type_with_variants,
+            product_category=self.type_with_variants.product_category
+        )
+        self.product_without_variants = factories.ProductFactory(
+            product_type=self.type_without_variants,
+            product_category=self.type_without_variants.product_category
+        )
 
         self.variant_attr_required = factories.ProductAttributeFactory.create(
             scope=ProductAttribute.Scope.VARIANT,
@@ -57,7 +63,7 @@ class ProductVariantModelTests(TestCase):
 
     def test_variant_not_allowed_for_product_without_variants(self):
         """Should raise ValidationError if product type does not support variants."""
-        variant = factories.ProductVariantFactory(
+        variant = factories.ProductVariantFactory.build(
             product=self.product_without_variants,
             sku="SKU124",
             title="Invalid Variant",

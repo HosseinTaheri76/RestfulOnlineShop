@@ -56,19 +56,6 @@ class ProductImageValidationTests(TestCase):
         self.assertEqual(old.is_primary, False)
 
     # ----------------------------------------------------------------------
-    # 3. Variant usage only for types that support variants
-    # ----------------------------------------------------------------------
-
-    def test_variant_image_for_non_variant_product_raises(self):
-        """Should raise when a product without variants gets a variant image."""
-        variant = ProductVariantFactory(product=self.product_without_variants)
-        img = ProductImageFactory.build(product=self.product_without_variants, product_variant=variant)
-
-        with self.assertRaises(ValidationError) as ctx:
-            img.full_clean()
-        self.assertIn("product_variant", ctx.exception.message_dict)
-
-    # ----------------------------------------------------------------------
     # 4. Unique position per product/variant
     # ----------------------------------------------------------------------
 

@@ -119,7 +119,8 @@ class TestCategoriesWithProductsCannotAcceptSubCategories(TestCase):
 
     def setUp(self):
         self.category = factories.ProductCategoryFactory()
-        self.product = factories.ProductFactory(product_category=self.category)
+        product_type = factories.ProductTypeFactory(product_category=self.category)
+        self.product = factories.ProductFactory(product_category=self.category, product_type=product_type)
 
     def test_category_with_product_cannot_accept_sub_categories(self):
         category = self.Factory.build(parent=self.category)
