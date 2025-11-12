@@ -4,7 +4,6 @@ from datetime import timedelta
 
 from django.db import models
 from django.conf import settings
-from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.hashers import make_password, check_password
@@ -192,10 +191,7 @@ class AbstractOTP(models.Model):
             self._record_failed_attempt()
             return False, {"reason": _("The code is invalid or has expired.")}
 
-        with transaction.atomic():
-            self._mark_successful_verification()
-            otp_grant = OTPGrant.objects.create(user=self.user, purpose=self.purpose)
-            details['grant_id'] = otp_grant.id
+        self._mark_successful_verification()
 
         return True, details
 
@@ -240,7 +236,7 @@ class OTPGrant(models.Model):
             self.save(update_fields=["consumed"])
 
     def save(self, *args, **kwargs):
-        if not self.pk:
+        if self.expires_at is None:
             self.expires_at = timezone.now() + timedelta(seconds=conf.TEMPORARY_PERMISSIONS_LIFETIME_SECONDS)
         super().save(*args, **kwargs)
 
