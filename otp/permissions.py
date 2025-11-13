@@ -9,10 +9,10 @@ class OTPGrantRequired(BasePermission):
         assert getattr(view, 'purpose')
         assert 'grant_id' in view.kwargs
         try:
-            grant = OTPGrant.objects.get(pk=view.kwargs['perm_id'])
+            grant = OTPGrant.objects.get(pk=view.kwargs['grant_id'])
             if grant.purpose != view.purpose or not grant.is_usable():
                 return False
-            view.temporary_permission = grant
+            view.grant = grant
             return True
         except OTPGrant.DoesNotExist:
             return False

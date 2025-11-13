@@ -4,7 +4,7 @@ from rest_framework.exceptions import NotFound
 from django.utils.translation import gettext as _
 from rest_framework.generics import GenericAPIView
 
-from . import serialziers
+from . import serializers
 
 
 class BaseOTPView(GenericAPIView):
@@ -31,8 +31,8 @@ class OTPGrantRequestView(BaseOTPView):
 
     def get_serializer_class(self):
         return {
-            'email': serialziers.EmailOTPRequestSerializer,
-            'phone': serialziers.PhoneNumberOTPRequestSerializer,
+            'email': serializers.EmailOTPRequestSerializer,
+            'phone': serializers.PhoneNumberOTPRequestSerializer,
         }[self.get_channel()]
 
 
@@ -40,6 +40,6 @@ class OTPGrantConfirmView(BaseOTPView):
 
     def get_serializer_class(self):
         return {
-            'email': serialziers.EmailOTPConfirmSerializer,
-            'phone': serialziers.PhoneNumberOTPConfirmSerializer,
+            'email': serializers.EmailOTPConfirmSerializer,
+            'phone': serializers.PhoneNumberOTPConfirmSerializer,
         }[self.get_channel()]
