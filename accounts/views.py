@@ -8,6 +8,25 @@ class UserCreateView(generics.CreateAPIView):
     serializer_class = serializers.UserCreateSerializer
 
 
+class PasswordLoginView(generics.CreateAPIView):
+    serializer_class = serializers.PasswordLoginSerializer
+
+    def perform_create(self, serializer):
+        pass
+
+
+class OTPLoginRequestView(OTPRequestView):
+    purpose = 'login'
+    valid_channels = ['email', 'phone']
+
+
+class OTPLoginConfirmView(generics.CreateAPIView):
+    serializer_class = serializers.OTPLoginConfirmSerializer
+
+    def perform_create(self, serializer):
+        pass
+
+
 class EmailVerificationRequestView(OTPRequestView):
     valid_channels = ['email']
     purpose = 'email-verification'

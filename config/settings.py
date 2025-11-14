@@ -9,8 +9,10 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
+
 from os import getenv
 from pathlib import Path
+from datetime import timedelta
 
 from dotenv import load_dotenv
 
@@ -152,9 +154,32 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Authentication and Authorization
 AUTH_USER_MODEL = 'accounts.User'
 
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'accounts.auth_backends.EmailPasswordBackend',
+    'accounts.auth_backends.PhonePasswordBackend',
+    'accounts.auth_backends.EmailOTPBackend',
+    'accounts.auth_backends.PhoneNumberOTPBackend',
+]
+
 # Debug toolbar
 INTERNAL_IPS = [
     # ...
     "127.0.0.1",
     # ...
 ]
+
+# Rest framework
+REST_FRAMEWORK = {
+
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    )
+
+}
+
+SIMPLE_JWT = {
+    'AUTH_HEADER_TYPES': ('JWT',),
+    'ACCESS_TOKEN_LIFETIME': timedelta(seconds=int(getenv('DJ_ACCESS_TOKEN_LIFETIME_SECONDS', 3600))),
+    'REFRESH_TOKEN_LIFETIME': timedelta(seconds=int(getenv('DJ_REFRESH_TOKEN_LIFETIME_SECONDS', 86400))),
+}

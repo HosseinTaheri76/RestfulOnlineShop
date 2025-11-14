@@ -1,4 +1,4 @@
-from django.contrib.auth import password_validation
+from django.contrib.auth import password_validation, authenticate
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.utils.translation import gettext_lazy as _
@@ -7,6 +7,7 @@ from phonenumber_field.serializerfields import PhoneNumberField
 from rest_framework import serializers
 from phonenumber_field.phonenumber import PhoneNumber
 from phonenumbers.phonenumberutil import NumberParseException
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import User
 from otp.services import OTPService
@@ -116,6 +117,80 @@ class UserCreateSerializer(serializers.ModelSerializer):
         validated_data["email"] = self._email
         validated_data["phone_number"] = self._phone_number
         return User.objects.create_user(**validated_data)
+
+
+class PasswordLoginSerializer(serializers.Serializer):
+    email_or_phone_number = serializers.CharField(
+        label=_("Email or Phone Number"),
+        write_only=True,
+    )
+    password = serializers.CharField(
+        label=_("Password"),
+        write_only=True,
+    )
+
+    @property
+    def request(self):
+        return self.context.get("request")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user, self.email, self.phone_number = None, None, None
+
+    def validate_email_or_phone_number(self, value):
+        if is_valid_email(value):
+            self.email = value
+            return value
+        elif is_valid_phone_number(value):
+            self.phone_number = value
+            return value
+        raise serializers.ValidationError(_('Please enter a valid email address or phone number.'))
+
+    def validate(self, attrs):
+        self.user = authenticate(
+            request=self.request,
+            email=self.email,
+            phone_number=self.phone_number,
+            password=attrs.get("password"),
+        )
+        return attrs
+
+    def to_representation(self, instance):
+        refresh = RefreshToken.for_user(self.user)
+        return {
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        }
+
+
+class OTPLoginConfirmSerializer(serializers.Serializer):
+    request_id = serializers.UUIDField(label=_("Request ID"), write_only=True)
+    token = serializers.CharField(label=_("Verification token"), write_only=True)
+
+    @property
+    def request(self):
+        return self.context.get("request")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = None
+
+    def validate(self, attrs):
+        request_id = attrs.get("request_id")
+        token = attrs.get("token")
+        self.user = authenticate(
+            request=self.request,
+            request_id=request_id,
+            token=token,
+        )
+        return attrs
+
+    def to_representation(self, instance):
+        refresh = RefreshToken.for_user(self.user)
+        return {
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        }
 
 
 class RequestEmailChangeSerializer(serializers.Serializer):
