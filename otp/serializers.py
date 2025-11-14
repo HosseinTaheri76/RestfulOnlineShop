@@ -27,9 +27,16 @@ class OTPConfirmSerializer(serializers.Serializer):
     Base serializer for confirming an OTP and issuing a temporary permission (grant).
     """
 
+
     otp_channel = None
+    grant = None
+
     request_id = serializers.UUIDField(label=_("Request ID"), write_only=True)
     token = serializers.CharField(label=_("Token"), write_only=True)
+
+    @property
+    def create_grant(self):
+        return self.context.get('create_grant', False)
 
     def validate(self, attrs):
         otp = OTPService.confirm_otp(
@@ -38,22 +45,20 @@ class OTPConfirmSerializer(serializers.Serializer):
             token=attrs["token"],
             purpose=self.context.get("purpose"),
         )
-
-        # Automatically issue an OTP grant
-        grant = OTPGrant.objects.create(
-            user=otp.user,
-            purpose=otp.purpose,
-        )
-
+        if self.create_grant:
+            self.grant = OTPGrant.objects.create(user=otp.user, purpose=otp.purpose)
         # Attach for to_representation and DRF context
-        self.instance = grant
+        self.instance = otp
         return attrs
 
     def to_representation(self, instance):
-        return {
-            "grant_id": str(instance.pk),
-            "expires_at": instance.expires_at,
-        }
+        rep = super().to_representation(instance)
+        if self.grant is not None:
+            rep.update({
+                "grant_id": str(instance.pk),
+                "expires_at": instance.expires_at,
+            })
+        return rep
 
 
 # ---------- Email OTP Serializers ----------

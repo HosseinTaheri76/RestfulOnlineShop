@@ -1,0 +1,176 @@
+from django.contrib.auth import password_validation
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.utils.translation import gettext_lazy as _
+from phonenumber_field.serializerfields import PhoneNumberField
+
+from rest_framework import serializers
+from phonenumber_field.phonenumber import PhoneNumber
+from phonenumbers.phonenumberutil import NumberParseException
+
+from .models import User
+from otp.services import OTPService
+
+
+def is_valid_email(value: str) -> bool:
+    try:
+        validate_email(value)
+        return True
+    except ValidationError:
+        return False
+
+
+def is_valid_phone_number(value: str) -> bool:
+    try:
+        return PhoneNumber.from_string(value, region="IR").is_valid()
+    except NumberParseException:
+        return False
+
+
+class UserCreateSerializer(serializers.ModelSerializer):
+    email_or_phone_number = serializers.CharField(
+        label=_("Email or Phone Number"),
+        write_only=True,
+        source="username",
+    )
+    password1 = serializers.CharField(
+        label=_("Password"),
+        write_only=True,
+        style={"input_type": "password"},
+        validators=[password_validation.validate_password],
+        help_text=password_validation.password_validators_help_text_html,
+    )
+    password2 = serializers.CharField(
+        label=_("Password confirmation"),
+        write_only=True,
+        style={"input_type": "password"},
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email_or_phone_number",
+            "password1",
+            "password2",
+            "email",
+            "email_verified",
+            "phone_number",
+            "phone_number_verified",
+            "first_name",
+            "last_name",
+        )
+        read_only_fields = (
+            "id",
+            "email",
+            "email_verified",
+            "phone_number",
+            "phone_number_verified",
+            "first_name",
+            "last_name",
+        )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._email = None
+        self._phone_number = None
+
+    # ---------------------------
+    # Field-level validation
+    # ---------------------------
+    def validate_email_or_phone_number(self, value):
+        if is_valid_email(value):
+            if User.objects.filter(email__iexact=value).exists():
+                raise serializers.ValidationError(
+                    _("A user with this email already exists.")
+                )
+            self._email = value
+        elif is_valid_phone_number(value):
+            if User.objects.filter(phone_number=value).exists():
+                raise serializers.ValidationError(
+                    _("A user with this phone number already exists.")
+                )
+            self._phone_number = value
+        else:
+            raise serializers.ValidationError(
+                _("Please enter a valid email address or phone number.")
+            )
+        return value
+
+    # ---------------------------
+    # Object-level validation
+    # ---------------------------
+    def validate(self, attrs):
+        if attrs["password1"] != attrs["password2"]:
+            raise serializers.ValidationError(
+                {"password2": _("The two passwords didn't match.")}
+            )
+        return attrs
+
+    # ---------------------------
+    # Create method
+    # ---------------------------
+    def create(self, validated_data):
+        validated_data.pop("password2")
+        validated_data["password"] = validated_data.pop("password1")
+        validated_data["email"] = self._email
+        validated_data["phone_number"] = self._phone_number
+        return User.objects.create_user(**validated_data)
+
+
+class RequestEmailChangeSerializer(serializers.Serializer):
+    _purpose = 'change-email'
+
+    email = serializers.EmailField(label=_("Email"))
+
+    @property
+    def user(self):
+        return self.context.get("request").user
+
+    @staticmethod
+    def validate_email(value):
+        if User.objects.filter(email__iexact=value).exists():
+            # either entering his current email or another ones email
+            raise serializers.ValidationError(_("A user with this email already exists."))
+        return value
+
+    def validate(self, attrs):
+        email = attrs["email"]
+        otp = OTPService.request_otp('email', self.user, email, self._purpose)
+        self.instance = otp
+        return attrs
+
+    def to_representation(self, instance):
+        return {
+            "request_id": str(instance.request_id),
+            "expires_at": instance.expires_at,
+        }
+
+
+class RequestPhoneChangeSerializer(serializers.Serializer):
+    _purpose = 'change-phone'
+
+    phone = PhoneNumberField(label=_("Phone number"), write_only=True, region="IR")
+
+    @property
+    def user(self):
+        return self.context.get("request").user
+
+    @staticmethod
+    def validate_phone(value):
+        if User.objects.filter(phone_number=value).exists():
+            # either entering his current phone or another ones phone
+            raise serializers.ValidationError(_("A user with this phone number already exists."))
+        return value
+
+    def validate(self, attrs):
+        phone = attrs["phone"]
+        otp = OTPService.request_otp('phone', self.user, phone, self._purpose)
+        self.instance = otp
+        return attrs
+
+    def to_representation(self, instance):
+        return {
+            "request_id": str(instance.request_id),
+            "expires_at": instance.expires_at,
+        }
