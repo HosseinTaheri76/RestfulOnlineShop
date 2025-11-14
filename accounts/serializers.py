@@ -249,3 +249,27 @@ class RequestPhoneChangeSerializer(serializers.Serializer):
             "request_id": str(instance.request_id),
             "expires_at": instance.expires_at,
         }
+
+class PasswordResetSerializer(serializers.Serializer):
+    password1 = serializers.CharField(
+        label=_("Password"),
+        write_only=True,
+        style={"input_type": "password"},
+        validators=[password_validation.validate_password],
+        help_text=password_validation.password_validators_help_text_html,
+    )
+    password2 = serializers.CharField(
+        label=_("Password confirmation"),
+        write_only=True,
+        style={"input_type": "password"},
+    )
+
+    def validate(self, attrs):
+        if attrs["password1"] != attrs["password2"]:
+            raise serializers.ValidationError(_("The two passwords didn't match."))
+        return attrs
+
+    def update(self, instance, validated_data):
+        instance.set_password(validated_data["password1"])
+        instance.save(update_fields=["password"])
+        return instance

@@ -55,8 +55,8 @@ class OTPConfirmSerializer(serializers.Serializer):
         rep = super().to_representation(instance)
         if self.grant is not None:
             rep.update({
-                "grant_id": str(instance.pk),
-                "expires_at": instance.expires_at,
+                "grant_id": str(self.grant.pk),
+                "expires_at": self.grant.expires_at,
             })
         return rep
 

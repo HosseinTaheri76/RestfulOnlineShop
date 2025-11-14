@@ -70,5 +70,20 @@ urlpatterns = [
         'confirm-phone-change/',
         views.ConfirmPhoneChangeView.as_view(),
         name='confirm-phone-change'
+    ),
+    path(
+        'password-reset-request/<str:channel>/',
+        views.PasswordResetRequestView.as_view(),
+        name='password-reset-request'
+    ),
+    path(
+        'password-reset-confirm/<str:channel>/',
+        views.PasswordResetConfirmView.as_view(),
+        name='password-reset-confirm'
+    ),
+    path(
+        'password-reset-complete/<uuid:grant_id>/',
+        views.PasswordResetCompleteView.as_view(),
+        name='password-reset-complete'
     )
 ]

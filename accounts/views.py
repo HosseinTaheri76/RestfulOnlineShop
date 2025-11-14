@@ -1,7 +1,12 @@
+from django.db import transaction
+from rest_framework import status
 from rest_framework import generics, permissions
+from rest_framework.response import Response
 
 from . import serializers
+from otp.permissions import OTPGrantRequired
 from otp.views import OTPRequestView, OTPConfirmView
+
 
 
 class UserCreateView(generics.CreateAPIView):
@@ -97,3 +102,30 @@ class ConfirmEmailChangeView(OTPConfirmView):
         user.email = email
         user.email_verified = True
         user.save(update_fields=['email', 'email_verified'])
+
+
+class PasswordResetRequestView(OTPRequestView):
+    valid_channels = ['email', 'phone']
+    purpose = 'reset-password'
+
+
+class PasswordResetConfirmView(OTPConfirmView):
+    valid_channels = ['email', 'phone']
+    purpose = 'reset-password'
+    create_grant = True
+
+class PasswordResetCompleteView(generics.GenericAPIView):
+
+    purpose = 'reset-password'
+    permission_classes = [OTPGrantRequired,]
+    serializer_class = serializers.PasswordResetSerializer
+
+    def post(self, request, *args, **kwargs):
+        grant = self.grant
+        serializer = self.get_serializer(grant.user, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            serializer.save()
+            grant.consume()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
