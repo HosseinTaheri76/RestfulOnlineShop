@@ -8,7 +8,6 @@ from otp.permissions import OTPGrantRequired
 from otp.views import OTPRequestView, OTPConfirmView
 
 
-
 class UserCreateView(generics.CreateAPIView):
     serializer_class = serializers.UserCreateSerializer
 
@@ -114,10 +113,10 @@ class PasswordResetConfirmView(OTPConfirmView):
     purpose = 'reset-password'
     create_grant = True
 
-class PasswordResetCompleteView(generics.GenericAPIView):
 
+class PasswordResetCompleteView(generics.GenericAPIView):
     purpose = 'reset-password'
-    permission_classes = [OTPGrantRequired,]
+    permission_classes = [OTPGrantRequired, ]
     serializer_class = serializers.PasswordResetSerializer
 
     def post(self, request, *args, **kwargs):
@@ -129,3 +128,10 @@ class PasswordResetCompleteView(generics.GenericAPIView):
             grant.consume()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+
+class PasswordChangeView(generics.UpdateAPIView):
+    permission_classes = [permissions.IsAuthenticated, ]
+    serializer_class = serializers.PasswordChangeSerializer
+
+    def get_object(self):
+        return self.request.user

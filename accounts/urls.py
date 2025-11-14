@@ -85,5 +85,10 @@ urlpatterns = [
         'password-reset-complete/<uuid:grant_id>/',
         views.PasswordResetCompleteView.as_view(),
         name='password-reset-complete'
+    ),
+    path(
+        'change-password/',
+        views.PasswordChangeView.as_view(),
+        name='change-password'
     )
 ]

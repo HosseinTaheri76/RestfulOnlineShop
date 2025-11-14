@@ -273,3 +273,38 @@ class PasswordResetSerializer(serializers.Serializer):
         instance.set_password(validated_data["password1"])
         instance.save(update_fields=["password"])
         return instance
+
+class PasswordChangeSerializer(serializers.Serializer):
+
+    old_password = serializers.CharField(
+        label=_("Old password"),
+        write_only=True,
+        style={"input_type": "password"}
+    )
+    new_password1 = serializers.CharField(
+        label=_("New password"),
+        write_only=True,
+        style={"input_type": "password"},
+        validators = [password_validation.validate_password],
+        help_text = password_validation.password_validators_help_text_html,
+    )
+    new_password2 = serializers.CharField(
+        label=_("New password"),
+        write_only=True,
+        style={"input_type": "password"}
+    )
+
+    def validate_old_password(self, value):
+        if not self.instance.check_password(value):
+            raise serializers.ValidationError(_("Old password incorrect."))
+        return value
+
+    def validate(self, attrs):
+        if attrs["new_password1"] != attrs["new_password2"]:
+            raise serializers.ValidationError(_("The two passwords didn't match."))
+        return attrs
+
+    def update(self, instance, validated_data):
+        instance.set_password(validated_data["new_password1"])
+        instance.save()
+        return instance
