@@ -153,6 +153,8 @@ class PasswordLoginSerializer(serializers.Serializer):
             phone_number=self.phone_number,
             password=attrs.get("password"),
         )
+        if not self.user:
+            raise serializers.ValidationError(_("Could not authenticate with provided credentials."))
         return attrs
 
     def to_representation(self, instance):
@@ -183,6 +185,8 @@ class OTPLoginConfirmSerializer(serializers.Serializer):
             request_id=request_id,
             token=token,
         )
+        if not self.user:
+            raise serializers.ValidationError(_("Could not authenticate with provided credentials."))
         return attrs
 
     def to_representation(self, instance):
