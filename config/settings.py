@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'mptt',
 
     'otp.apps.OtpConfig',
+    'locations.apps.LocationsConfig',
     'accounts.apps.AccountsConfig',
     'products.apps.ProductsConfig',
 ]
