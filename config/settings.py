@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'otp.apps.OtpConfig',
     'locations.apps.LocationsConfig',
     'accounts.apps.AccountsConfig',
+    'addresses.apps.AddressesConfig',
     'products.apps.ProductsConfig',
 ]
 
