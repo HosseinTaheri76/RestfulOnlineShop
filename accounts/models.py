@@ -38,3 +38,13 @@ class User(AbstractUser):
     )
 
     objects = CustomUserManager()
+
+    def get_usable_email(self):
+        if self.email and self.email_verified:
+            return self.email
+        return None
+
+    def get_usable_phone_number(self):
+        if self.phone_number and self.phone_number_verified:
+            return self.phone_number
+        return None

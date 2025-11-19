@@ -7,11 +7,8 @@ from .models import UserAddress
 @admin.register(UserAddress)
 class UserAddressAdmin(admin.ModelAdmin):
     list_display = (
-        "id",
+        "__str__",
         "user",
-        "title",
-        "recipient_name_display",
-        "recipient_phone_display",
         "province",
         "city",
         "is_default",
@@ -33,12 +30,8 @@ class UserAddressAdmin(admin.ModelAdmin):
         "user__first_name",
         "user__last_name",
     )
-    autocomplete_fields = ("province", "city")
+    autocomplete_fields = ("user", "province", "city")
     list_editable = ("is_default",)
-    readonly_fields = (
-        "recipient_name_display",
-        "recipient_phone_display",
-    )
 
     fieldsets = (
         (_("User"), {
@@ -47,9 +40,7 @@ class UserAddressAdmin(admin.ModelAdmin):
         (_("Recipient"), {
             "fields": (
                 "recipient_full_name",
-                "recipient_name_display",
                 "recipient_phone",
-                "recipient_phone_display",
             )
         }),
         (_("Address"), {
@@ -63,14 +54,3 @@ class UserAddressAdmin(admin.ModelAdmin):
             )
         }),
     )
-
-    # -------------------------
-    # Computed fields (readonly)
-    # -------------------------
-    def recipient_name_display(self, obj):
-        return obj.get_recipient_full_name()
-    recipient_name_display.short_description = _("Recipient (final)")
-
-    def recipient_phone_display(self, obj):
-        return obj.get_recipient_phone()
-    recipient_phone_display.short_description = _("Phone (final)")
