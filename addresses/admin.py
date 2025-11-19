@@ -19,7 +19,6 @@ class UserAddressAdmin(admin.ModelAdmin):
     )
     list_filter = (
         "province",
-        "city",
         "is_default",
     )
     search_fields = (
@@ -34,7 +33,7 @@ class UserAddressAdmin(admin.ModelAdmin):
         "user__first_name",
         "user__last_name",
     )
-    autocomplete_fields = ("user", "province", "city")
+    autocomplete_fields = ("province", "city")
     list_editable = ("is_default",)
     readonly_fields = (
         "recipient_name_display",

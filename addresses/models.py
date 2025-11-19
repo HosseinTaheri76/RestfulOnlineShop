@@ -12,6 +12,7 @@ from utils.models.validation import ModelValidationMixin, skip_if_missing_fields
 
 
 class UserAddress(ModelValidationMixin, models.Model):
+
     user = models.ForeignKey(
         to=settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -88,14 +89,25 @@ class UserAddress(ModelValidationMixin, models.Model):
             self.handle_is_default()
         super().save(*args, **kwargs)
 
-    # ---------------------
-    # Utility Getters
-    # ---------------------
-    def get_recipient_full_name(self):
-        return self.recipient_full_name or self.user.get_full_name()
+    def clean(self):
+        errors = {}
 
-    def get_recipient_phone(self):
-        return self.recipient_phone or self.user.phone_number
+        try:
+            super().clean()
+        except ValidationError as e:
+            errors.update(e.message_dict)
+
+        self.recipient_phone = self.recipient_phone or self.user.phone_number
+        self.recipient_full_name = self.recipient_full_name or self.user.get_full_name()
+
+        if not self.recipient_phone:
+            errors["recipient_phone"] = _("Recipient phone number is empty and the user has no phone number.")
+
+        if not self.recipient_full_name:
+            errors["recipient_full_name"] = _("Recipient full name is empty and the user profile has no full name.")
+
+        if errors:
+            raise ValidationError(errors)
 
     # ---------------------
     # Validation Methods
@@ -105,24 +117,6 @@ class UserAddress(ModelValidationMixin, models.Model):
         if self.city.province_id != self.province_id:
             raise ValidationError({
                 "city": _("Selected city does not belong to selected province.")
-            })
-
-    @skip_if_missing_fields("user")
-    def _validate_recipient_full_name(self):
-        if not self.get_recipient_full_name():
-            raise ValidationError({
-                "recipient_full_name": _(
-                    "Recipient full name is empty and the user profile has no full name."
-                )
-            })
-
-    @skip_if_missing_fields("user")
-    def _validate_recipient_phone(self):
-        if not self.get_recipient_phone():
-            raise ValidationError({
-                "recipient_phone": _(
-                    "Recipient phone number is empty and the user has no phone number."
-                )
             })
 
     def _validate_postal_code(self):
