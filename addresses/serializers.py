@@ -1,4 +1,3 @@
-from django.core.exceptions import ValidationError
 from rest_framework import serializers
 
 from .models import UserAddress
@@ -28,10 +27,21 @@ class UserAddressSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        # Determine instance (create/update)
+
         instance = getattr(self, 'instance', None)
-        # Create a temporary model instance to validate
-        tmp = UserAddress(**{**(instance.to_dict() if instance else {}), **attrs}, user=self.user)
-        # Call Django's model-level validation
+
+        # If updating, use the real instance
+        # If creating, use a blank instance
+        tmp = instance if instance is not None else UserAddress()
+
+        # Ensure user is always present
+        tmp.user = self.user
+
+        # Apply only updated fields
+        for key, value in attrs.items():
+            setattr(tmp, key, value)
+
+        # Run Django model-level validation
         tmp.full_clean()
+
         return attrs
