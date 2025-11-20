@@ -130,10 +130,10 @@ class UserAddress(ModelValidationMixin, models.Model):
 
         # Auto-fill recipient info
         self.recipient_full_name = (
-            self.recipient_full_name or self.user.get_full_name()
+                self.recipient_full_name or self.user.get_full_name()
         )
         self.recipient_phone = (
-            self.recipient_phone or self.user.get_usable_phone_number()
+                self.recipient_phone or self.user.get_usable_phone_number()
         )
 
         # Validate missing fallback data
@@ -178,8 +178,8 @@ class UserAddress(ModelValidationMixin, models.Model):
         Prevent changing the user of a default address.
         """
         if (
-            self._tracker.has_changed("user_id")
-            and self._tracker.previous("is_default")
+                self._tracker.has_changed("user_id")
+                and self._tracker.previous("is_default")
         ):
             raise ValidationError({
                 "user": _(
@@ -214,3 +214,18 @@ class UserAddress(ModelValidationMixin, models.Model):
         # If user has no default address -> force this default
         if not qs.filter(is_default=True).exists():
             self.is_default = True
+
+    def to_dict(self):
+        return {
+            'title': self.title,
+            'recipient_full_name': self.recipient_full_name,
+            'recipient_phone': self.recipient_phone,
+            'province': self.province,
+            'city': self.city,
+            'street': self.street,
+            'address_line_2': self.address_line_2,
+            'building_number': self.building_number,
+            'unit_number': self.unit_number,
+            'postal_code': self.postal_code,
+            'is_default': self.is_default,
+        }

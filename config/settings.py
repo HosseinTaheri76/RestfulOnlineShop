@@ -182,6 +182,6 @@ REST_FRAMEWORK = {
 
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('JWT',),
-    'ACCESS_TOKEN_LIFETIME': timedelta(seconds=int(getenv('DJ_ACCESS_TOKEN_LIFETIME_SECONDS', 3600))),
-    'REFRESH_TOKEN_LIFETIME': timedelta(seconds=int(getenv('DJ_REFRESH_TOKEN_LIFETIME_SECONDS', 86400))),
+    'ACCESS_TOKEN_LIFETIME': timedelta(seconds=int(getenv('ACCESS_TOKEN_LIFETIME', 3600))),
+    'REFRESH_TOKEN_LIFETIME': timedelta(seconds=int(getenv('REFRESH_TOKEN_LIFETIME', 86400))),
 }
