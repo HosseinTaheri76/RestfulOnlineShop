@@ -17,54 +17,19 @@ from utils.models.helpers import SlugModelMixin, get_prefetched
 from utils.models.validation import ModelValidationMixin, skip_if_missing_fields
 
 
-class ActiveProductCategoryManager(TreeManager):
-    """
-        Custom manager for the ProductCategory model that returns only *active* categories.
-
-        This manager enforces a storefront-level visibility rule by excluding
-        categories that are either:
-          • Inactive themselves (`is_active=False`), or
-
-        By using this manager, developers can safely query for categories that should
-        be visible to customers without having to remember filtering conditions.
-    """
+class ActiveCategoryManager(TreeManager):
 
     def get_queryset(self):
         return super().get_queryset().filter(is_active=True)
 
 
 class ActiveProductManager(models.Manager):
-    """
-    Custom manager for the Product model that returns only *active* products.
-
-    This manager enforces a storefront-level visibility rule by excluding
-    products that are either:
-
-      • Inactive themselves (`is_active=False`), or
-      • Belong to an inactive category (`product_category__is_active=False`).
-
-    By using this manager, developers can safely query for products that should
-    be visible to customers without having to remember filtering conditions.
-    """
 
     def get_queryset(self):
         return super().get_queryset().filter(is_active=True, product_category__is_active=True)
 
 
-class ActiveProductVariantManager(models.Manager):
-    """
-    Custom manager for the ProductVariant model that returns only *active* product-variants.
-
-    This manager enforces a storefront-level visibility rule by excluding
-    product variants that are either:
-
-      • Inactive themselves (`is_active=False`), or
-      • Belong to an inactive product (`product__is_active=False`).
-      • Belong to an inactive category (`product__product_category__is_active=False`).
-
-    By using this manager, developers can safely query for products that should
-    be visible to customers without having to remember filtering conditions.
-    """
+class ActiveSKUManager(models.Manager):
 
     def get_queryset(self):
         return super().get_queryset().filter(
@@ -74,25 +39,17 @@ class ActiveProductVariantManager(models.Manager):
         )
 
 
-class ProductCategory(ModelValidationMixin, SlugModelMixin, MPTTModel):
-    """
-    MPTT-backed product category with:
-      - maximum tree depth enforced (levels 0..2 allowed)
-      - activation propagation (up & down) with bulk updates
-      - deactivation of ancestors when they have no active descendants
-    """
-
-    # configuration
-    MAX_LEVEL = 2  # allowed levels: 0, 1, 2
+class Category(ModelValidationMixin, SlugModelMixin, MPTTModel):
+    MAX_LEVEL = 2
 
     parent = TreeForeignKey(
         to="self",
         null=True,
         blank=True,
-        related_name="children",
-        verbose_name=_("parent"),
         on_delete=models.SET_NULL,
+        related_name="sub_categories",
         limit_choices_to=Q(level__lt=MAX_LEVEL),
+        verbose_name=_("parent"),
     )
     title = models.CharField(
         unique=True,
@@ -108,40 +65,24 @@ class ProductCategory(ModelValidationMixin, SlugModelMixin, MPTTModel):
         default=True,
         verbose_name=_("active")
     )
+
     objects = TreeManager()
-    active = ActiveProductCategoryManager()
-    # tracker to detect changes to parent and is_active
+    active = ActiveCategoryManager()
+
     _tracker = FieldTracker(fields=["parent_id", "is_active"])
 
     class MPTTMeta:
         order_insertion_by = ["title"]
 
     class Meta:
-        verbose_name = _("Product category")
-        verbose_name_plural = _("Product categories")
-        constraints = [
-            models.CheckConstraint(
-                name="category_level_less_than_equal_2", check=Q(level__lte=2)
-            )
-        ]
+        verbose_name = _("category")
+        verbose_name_plural = _("categories")
 
-    def __str__(self) -> str:
+    def __str__(self):
         return self.title
 
-    @property
-    def full_path(self) -> str:
-        return " → ".join(self.get_ancestors(include_self=True).values_list("title", flat=True))
-
-    # ----------------------------
-    # Public model hooks
-    # ----------------------------
     @transaction.atomic
     def save(self, *args, **kwargs) -> None:
-        """
-        On save:
-          - run activation propagation logic
-        """
-        # handle activation/deactivation and re-parent cleanup (uses in-memory tracker)
         self._handle_activation()
         super().save(*args, **kwargs)
 
@@ -150,87 +91,46 @@ class ProductCategory(ModelValidationMixin, SlugModelMixin, MPTTModel):
 
     @transaction.atomic
     def delete(self, *args, **kwargs) -> None:
-        """
-        When deleting an active node, we may need to clean up ancestors that
-        no longer have active descendants.
-        """
-        # if this node is active and has a parent, ancestors might need deactivation
         if self.is_active and self.parent:
-            # call on the node to compute and bulk-update ancestors
             self._deactivate_ancestors_if_has_no_active_descendants(self)
         super().delete(*args, **kwargs)
 
     def _validate_depth(self) -> None:
-        """
-        Ensure creating/moving this node doesn't produce a tree deeper than MAX_LEVEL.
-        Cases:
-          - New node or leaf node: simply check parent's level.
-          - Existing node with descendants: compute the farthest descendant and project new depth.
-        """
+
         if not self.parent:
-            return  # root nodes always OK
+            return
 
         error_msg = _("The category \"%(category)s\" cannot accept subcategories due to category depth limit.")
 
-        # Case A: creating a new node or this node is a leaf — check parent level only
         if not self.pk or self.is_leaf_node():
             if self.parent.level >= self.MAX_LEVEL:
                 raise ValidationError({"parent": error_msg % {"category": self.parent}})
             return
 
-        # Case B: moving an existing node that has descendants
-        # get maximum descendant level; if None fallback to this.level
         max_descendant_level = self.get_descendants().aggregate(max_level=Max("level"))["max_level"] or self.level
 
-        # number of levels below this node's level (distance to the farthest descendant)
         distance_to_farthest = max_descendant_level - self.level
 
-        # resulting deepest level when placed under new parent:
         resulting_deepest = self.parent.level + distance_to_farthest + 1
 
         if resulting_deepest > self.MAX_LEVEL:
             raise ValidationError({"parent": error_msg % {"category": self.parent}})
 
     def _validate_categories_with_products_cannot_accept_subcategories(self):
-        """
-        Ensure that a category that already has products cannot become
-        a parent of another category. This maintains a clean category tree
-        where leaf categories hold products, and parent categories only
-        organize subcategories.
-        """
+
         if self.parent and self.parent.products.exists():
             raise ValidationError(_("A category that contains products cannot have subcategories."))
 
-    # ----------------------------
-    # Helpers: activation propagation
-    # ----------------------------
     @staticmethod
-    def _deactivate_ancestors_if_has_no_active_descendants(node: "ProductCategory") -> None:
-        """
-        Walk ancestors from the nearest parent up to root and mark as inactive where they
-        have no other active children. Implemented in-memory then bulk-updated to
-        avoid many small queries/updates.
+    def _deactivate_ancestors_if_has_no_active_descendants(node):
 
-        Algorithm:
-          - get ancestors ordered from nearest to root (reverse of get_ancestors())
-          - keep a set `still_active_ids` of active nodes that should remain active
-            (initially includes all active nodes in DB except those we will deactivate)
-          - iterate ancestors; if an ancestor has no active child outside the
-            already-deactivated set, mark it as to-be-deactivated
-          - bulk update all deactivated nodes in one query
-        """
-        # load ancestors closest-first (nearest parent -> root)
-        ancestors = list(node.get_ancestors().prefetch_related("children").all())
-
-        # `to_deactivate` will collect pks we decide should be deactivated
-        to_deactivate: Set[int] = set()
-        # include the node itself as an already "deactivated" candidate
+        ancestors = list(node.get_ancestors().prefetch_related("sub_categories").all())
+        to_deactivate = set()
         to_deactivate.add(node.pk)
 
-        # We'll check each ancestor's direct children; if none active outside to_deactivate, mark it
         for anc in reversed(ancestors):
-            children = list(anc.children.all())
-            # if there exists any active child not in to_deactivate, keep ancestor active
+            children = list(anc.sub_categories.all())
+
             has_active_child_outside = any(
                 (child.is_active and child.pk not in to_deactivate) for child in children
             )
@@ -238,50 +138,34 @@ class ProductCategory(ModelValidationMixin, SlugModelMixin, MPTTModel):
                 to_deactivate.add(anc.pk)
 
         if to_deactivate:
-            ProductCategory.objects.filter(pk__in=to_deactivate).update(is_active=False)
+            Category.objects.filter(pk__in=to_deactivate).update(is_active=False)
 
     def _handle_activation(self) -> None:
-        """
-        Propagate activation/deactivation and fix up branches on parent changes.
 
-        Behavior:
-          - CREATE: if created as active and has parent -> activate ancestors
-          - UPDATE (is_active toggled):
-                * activated -> activate family (ancestors + descendants)
-                * deactivated -> deactivate descendants and then deactivate ancestors that lost all active children
-          - MOVE (parent changed):
-                * if active and new parent -> ensure new ancestors (including parent) are active
-                * for previous parent branch, recompute ancestors that may need deactivation
-        """
         is_update = bool(self.pk)
         parent_changed = self._tracker.has_changed("parent_id")
         is_active_changed = self._tracker.has_changed("is_active")
         prev_parent_id: Optional[int] = self._tracker.previous("parent_id") if is_update else None
 
-        # --- CREATE ---
         if not is_update:
             if self.is_active and self.parent:
-                # activate parent and all its ancestors
                 self.parent.get_ancestors(include_self=True).update(is_active=True)
             return
 
-        # --- is_active toggled on existing node ---
         if is_active_changed:
             if self.is_active:
-                # activate whole family (node + ancestors + descendants)
+
                 self.get_family().update(is_active=True)
             else:
-                # deactivate descendants (including self) and then cleanup ancestors
+
                 self.get_descendants().update(is_active=False)
                 self._deactivate_ancestors_if_has_no_active_descendants(self)
 
-        # --- parent changed (re-parenting) ---
         if parent_changed:
-            # if the node is active, ensure new parent branch is active
+
             if self.is_active and self.parent:
                 self.parent.get_ancestors(include_self=True).update(is_active=True)
 
-            # the previous parent branch may have lost its only active child -> cleanup
             if prev_parent_id:
                 prev_parent = type(self).objects.filter(pk=prev_parent_id).first()
                 if prev_parent:
@@ -577,13 +461,6 @@ class ProductTypeAttribute(ModelValidationMixin, models.Model):
 
 class Product(ModelValidationMixin, SlugModelMixin, models.Model):
     """
-    Represents a sellable product in the catalog.
-
-    A product can either:
-      - Be a standalone item with no variants (price stored directly here), or
-      - Have variants (e.g., different sizes, colors, or configurations),
-        in which case pricing and stock are defined at the variant level.
-
     The allowed attributes for a product are determined by its `product_type`,
     and it is classified under a `product_category` (MPTT tree).
     """
@@ -613,29 +490,6 @@ class Product(ModelValidationMixin, SlugModelMixin, models.Model):
         unique=True,
         verbose_name=_("title"),
         help_text=_("The human-readable name of the product."),
-    )
-    sku = models.CharField(
-        max_length=64,
-        blank=True,
-        null=True,
-        unique=True,
-        verbose_name=_("SKU"),
-        help_text=_(
-            "Stock Keeping Unit — required for products without variants. "
-            "Leave blank if this product has variants; each variant will define its own SKU."
-        ),
-    )
-    price = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        verbose_name=_("price"),
-        help_text=_(
-            "Set a base price only if this product has no variants. "
-            "For products with variants, leave this blank — "
-            "each variant will define its own price."
-        ),
     )
     description = models.TextField(
         blank=True,
@@ -670,75 +524,75 @@ class Product(ModelValidationMixin, SlugModelMixin, models.Model):
         """Return absolute URL."""
         return reverse('products:product-detail', kwargs={'product_slug': self.slug})
 
-    @cached_property
-    def primary_variant(self):
-        if self.product_type.has_variants:
-            variants = get_prefetched(
-                obj=self,
-                attr_name="prefetched_variants",
-                fallback_qs=self.variants(manager='active').all()
-            )
-            return next(filter(lambda variant: variant.is_primary, variants), None)
-        return None
+    # @cached_property
+    # def primary_variant(self):
+    #     if self.product_type.has_variants:
+    #         variants = get_prefetched(
+    #             obj=self,
+    #             attr_name="prefetched_variants",
+    #             fallback_qs=self.variants(manager='active').all()
+    #         )
+    #         return next(filter(lambda variant: variant.is_primary, variants), None)
+    #     return None
 
-    @cached_property
-    def is_available(self):
-        """
-        Determines if the product (or any of its variants, if applicable) has available stock.
-        Uses prefetched data when available to avoid extra queries.
-        """
-        if self.product_type.has_variants:
-            variants = get_prefetched(obj=self, attr_name="prefetched_variants", fallback_qs=self.variants.all())
-            for variant in variants:
-                if variant.is_available:
-                    return True
-            return False
-        stocks = get_prefetched(obj=self, attr_name="prefetched_stocks", fallback_qs=self.stocks.all())
-        return bool(stocks) and stocks[0].available > 0
-
-    @cached_property
-    def effective_price(self):
-        """
-        Returns the product's current sellable price.
-        - For multi-variant products: returns the primary variant's price.
-        - For single-variant products: returns the product's own price.
-        Returns None if no price is applicable or the product is unavailable.
-        """
-        # Choose product or primary variant
-        target = self.primary_variant if self.product_type.has_variants else self
-        if not target:
-            return None
-
-        # Skip unavailable items early
-        if not self.is_available:
-            return None
-
-        # Ensure price attribute exists and is valid
-        return getattr(target, "price", None)
-
-    @cached_property
-    def primary_image_url(self):
-        images = get_prefetched(
-            obj=self,
-            attr_name="prefetched_images",
-            fallback_qs=self.images.all()
-        )
-        primary_image = next((image for image in images if image.is_primary), None)
-        return primary_image.image.url if primary_image else ""
-
-    @cached_property
-    def thumbnail_image_url(self):
-        """
-        Returns the URL of the primary image for this product or its primary variant.
-        Prefers product images; falls back to primary variant images if none exist.
-        """
-        product_primary_image = self.primary_image_url
-
-        if product_primary_image:
-            return product_primary_image
-        if self.primary_variant:
-            return self.primary_variant.primary_image_url
-        return ""
+    # @cached_property
+    # def is_available(self):
+    #     """
+    #     Determines if the product (or any of its variants, if applicable) has available stock.
+    #     Uses prefetched data when available to avoid extra queries.
+    #     """
+    #     if self.product_type.has_variants:
+    #         variants = get_prefetched(obj=self, attr_name="prefetched_variants", fallback_qs=self.variants.all())
+    #         for variant in variants:
+    #             if variant.is_available:
+    #                 return True
+    #         return False
+    #     stocks = get_prefetched(obj=self, attr_name="prefetched_stocks", fallback_qs=self.stocks.all())
+    #     return bool(stocks) and stocks[0].available > 0
+    #
+    # @cached_property
+    # def effective_price(self):
+    #     """
+    #     Returns the product's current sellable price.
+    #     - For multi-variant products: returns the primary variant's price.
+    #     - For single-variant products: returns the product's own price.
+    #     Returns None if no price is applicable or the product is unavailable.
+    #     """
+    #     # Choose product or primary variant
+    #     target = self.primary_variant if self.product_type.has_variants else self
+    #     if not target:
+    #         return None
+    #
+    #     # Skip unavailable items early
+    #     if not self.is_available:
+    #         return None
+    #
+    #     # Ensure price attribute exists and is valid
+    #     return getattr(target, "price", None)
+    #
+    # @cached_property
+    # def primary_image_url(self):
+    #     images = get_prefetched(
+    #         obj=self,
+    #         attr_name="prefetched_images",
+    #         fallback_qs=self.images.all()
+    #     )
+    #     primary_image = next((image for image in images if image.is_primary), None)
+    #     return primary_image.image.url if primary_image else ""
+    #
+    # @cached_property
+    # def thumbnail_image_url(self):
+    #     """
+    #     Returns the URL of the primary image for this product or its primary variant.
+    #     Prefers product images; falls back to primary variant images if none exist.
+    #     """
+    #     product_primary_image = self.primary_image_url
+    #
+    #     if product_primary_image:
+    #         return product_primary_image
+    #     if self.primary_variant:
+    #         return self.primary_variant.primary_image_url
+    #     return ""
 
     @skip_if_missing_fields("product_category")
     def _validate_category_is_leaf_node(self):
@@ -749,19 +603,6 @@ class Product(ModelValidationMixin, SlugModelMixin, models.Model):
     def _validate_is_active(self):
         if self.is_active and not self.product_category.is_active:
             raise ValidationError({"is_active": _("Cannot activate product under inactive category.")})
-
-    @skip_if_missing_fields("product_type")
-    def _validate_single_vs_multi_variant_fields(self):
-        if self.product_type.has_variants:
-            if self.price:
-                raise ValidationError({'price': _("Price must be empty for products with variants.")})
-            if self.sku:
-                raise ValidationError({'sku': _("SKU must be empty for products with variants.")})
-        else:
-            if not self.price:
-                raise ValidationError({'price': _("Price must be filled for single-variant products.")})
-            if not self.sku:
-                raise ValidationError({'sku': _("SKU must be filled for single-variant products.")})
 
     def _validate_product_type_change(self):
         if self.pk and self._tracker.has_changed("product_type_id"):
@@ -803,7 +644,7 @@ class Product(ModelValidationMixin, SlugModelMixin, models.Model):
         existing_attr_ids = set(
             ProductSKUAttributeValue.objects.filter(
                 product=self,
-                product_variant__isnull=True,
+                product_sku__isnull=True,
                 product_type_attribute_id__in=required_attr_ids,
             ).values_list("product_type_attribute_id", flat=True)
         )
@@ -821,24 +662,13 @@ class Product(ModelValidationMixin, SlugModelMixin, models.Model):
         ])
 
 
-class ProductVariant(ModelValidationMixin, models.Model):
-    """
-    Represents a specific variation of a product (e.g., iPhone 16 128GB Blue vs iPhone 16 256GB Black).
-
-    Each variant:
-    - Belongs to a `Product`.
-    - Has a unique SKU (Stock Keeping Unit).
-    - Can optionally have its own display title.
-    - Can be active/inactive independently, but activation is also dependent
-      on the product and category being active.
-    """
-
+class ProductSKU(ModelValidationMixin, models.Model):
     product = models.ForeignKey(
         to=Product,
         on_delete=models.CASCADE,
-        related_name="variants",
+        related_name="skus",
         verbose_name=_("product"),
-        help_text=_("The product this variant belongs to."),
+        help_text=_("The product this SKU belongs to."),
     )
     sku = models.CharField(
         max_length=50,
@@ -850,7 +680,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
         max_length=255,
         blank=True,
         verbose_name=_("title"),
-        help_text=_("Optional variant-specific title (e.g., '128GB Blue')."),
+        help_text=_("Optional SKU-specific title (e.g., '128GB Blue')."),
     )
     price = models.DecimalField(
         max_digits=10,
@@ -860,29 +690,29 @@ class ProductVariant(ModelValidationMixin, models.Model):
     is_active = models.BooleanField(
         default=True,
         verbose_name=_("is active"),
-        help_text=_("Whether this variant is visible and available for sale."),
+        help_text=_("Whether this SKU is visible and available for sale."),
     )
     is_primary = models.BooleanField(
         default=False,
         verbose_name=_("is primary"),
-        help_text=_("Marks this as the main variant of the product."),
+        help_text=_("Marks this as the main SKU of the product."),
     )
 
     # Default manager
     objects = models.Manager()
 
-    # Custom manager that only returns active variants whose
+    # Custom manager that only returns active SKUs whose
     # product and category are also active.
-    active = ActiveProductVariantManager()
+    active = ActiveProductSKUManager()
 
     class Meta:
-        verbose_name = _("product variant")
-        verbose_name_plural = _("product variants")
+        verbose_name = _("product SKU")
+        verbose_name_plural = _("product SKUs")
         ordering = ["product", "sku"]
         constraints = [
             models.UniqueConstraint(
                 fields=["product", "title"],
-                name="unique_variant_title_per_product",
+                name="unique_sku_title_per_product",
             ),
         ]
 
@@ -895,42 +725,32 @@ class ProductVariant(ModelValidationMixin, models.Model):
         super().save(*args, **kwargs)
         self._create_required_attributes()
 
-    @cached_property
-    def is_available(self):
-        stock = get_prefetched(self, 'prefetched_stocks', self.stocks.all())
-        return stock[0].available > 0 if stock else False
-
-    @cached_property
-    def primary_image_url(self):
-        images = get_prefetched(
-            obj=self,
-            attr_name="prefetched_images",
-            fallback_qs=self.images.all()
-        )
-        primary_image = next((image for image in images if image.is_primary), None)
-        return primary_image.image_url if primary_image else ""
-
-    # ────────────────────────────────
-    # Validations
-    # ────────────────────────────────
-    @skip_if_missing_fields('product')
-    def _validate_product_type_is_multi_variant(self):
-        if not self.product.product_type.has_variants:
-            raise ValidationError(_("This product cannot have variants."))
+    # @cached_property
+    # def is_available(self):
+    #     stock = get_prefetched(self, 'prefetched_stocks', self.stocks.all())
+    #     return stock[0].available > 0 if stock else False
+    #
+    # @cached_property
+    # def primary_image_url(self):
+    #     images = get_prefetched(
+    #         obj=self,
+    #         attr_name="prefetched_images",
+    #         fallback_qs=self.images.all()
+    #     )
+    #     primary_image = next((image for image in images if image.is_primary), None)
+    #     return primary_image.image_url if primary_image else ""
 
     @skip_if_missing_fields('product')
     def _validate_is_active(self):
         if self.is_active and not self.product.is_active:
-            raise ValidationError({"is_active": _("Cannot activate variant under inactive product.")})
+            raise ValidationError({"is_active": _("Cannot activate SKU under inactive product.")})
 
     # ────────────────────────────────
     # Helpers
     # ────────────────────────────────
     def _handle_is_primary(self):
-        if not self.product.product_type.has_variants:
-            return
 
-        qs = ProductVariant.objects.filter(product=self.product)
+        qs = ProductSKU.objects.filter(product=self.product)
 
         if self.pk:
             qs = qs.exclude(pk=self.pk)
@@ -944,7 +764,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
     def _create_required_attributes(self):
         """
         Ensure all required VARIANT-scope attributes exist.
-        These apply to the variant itself, not its product.
+        These apply to the SKU itself, not its product.
         """
         required_attr_ids = set(
             ProductTypeAttribute.objects.filter(
@@ -960,7 +780,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
         existing_attr_ids = set(
             ProductSKUAttributeValue.objects.filter(
                 product=self.product,
-                product_variant_id=self.pk,
+                product_sku_id=self.pk,
                 product_type_attribute_id__in=required_attr_ids,
             ).values_list("product_type_attribute_id", flat=True)
         )
@@ -972,7 +792,7 @@ class ProductVariant(ModelValidationMixin, models.Model):
         ProductSKUAttributeValue.objects.bulk_create([
             ProductSKUAttributeValue(
                 product=self.product,
-                product_variant=self,
+                product_sku=self,
                 product_type_attribute_id=attr_id,
             )
             for attr_id in missing_attr_ids
@@ -981,10 +801,10 @@ class ProductVariant(ModelValidationMixin, models.Model):
 
 class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
     """
-    Represents the value of an attribute for either a product or one of its variants.
+    Represents the value of an attribute for either whole product or one of its SKUs.
 
-    If `product_variant` is NULL, the value applies to the entire product (shared by all variants).
-    If `product_variant` is set, the value applies only to that specific variant.
+    If `product_sku` is NULL, the value applies to the entire product (shared by all SKUs).
+    If `product_sku` is set, the value applies only to that specific SKU.
     """
 
     product = models.ForeignKey(
@@ -994,13 +814,13 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
         verbose_name=_("product"),
     )
 
-    product_variant = models.ForeignKey(
-        to=ProductVariant,
+    product_sku = models.ForeignKey(
+        to=ProductSKU,
         null=True,
         blank=True,
         on_delete=models.CASCADE,
         related_name="attribute_values",
-        verbose_name=_("variant"),
+        verbose_name=_("SKU"),
     )
 
     product_type_attribute = models.ForeignKey(
@@ -1017,19 +837,19 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
     )
 
     class Meta:
-        verbose_name = _("product or variant attribute value")
-        verbose_name_plural = _("product and variant attribute values")
+        verbose_name = _("product or SKU attribute value")
+        verbose_name_plural = _("product and SKU attribute values")
         constraints = [
             models.UniqueConstraint(
-                fields=["product", "product_variant", "product_type_attribute"],
-                name="unique_product_variant_type_attribute",
+                fields=["product", "product_sku", "product_type_attribute"],
+                name="unique_product_sku_type_attribute",
             )
         ]
 
     @property
-    def is_variant_level(self):
-        """Returns True if this value is tied to a specific variant."""
-        return self.product_variant_id is not None
+    def is_sku_level(self):
+        """Returns True if this value is tied to a specific SKU."""
+        return self.product_sku_id is not None
 
     def __str__(self):
         return _(
@@ -1037,17 +857,17 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
         ) % {
             "attribute": self.product_type_attribute.product_attribute.title,
             "value": self.value.value if self.value else "",
-            "scope": f"Variant: {self.product_variant.sku}" if self.product_variant else _("Product-wide"),
+            "scope": f"Sku: {self.product_sku.sku}" if self.product_sku else _("Product-wide"),
         }
 
-    @skip_if_missing_fields('product_variant')
-    def _validate_variant_belongs_to_product(self):
+    @skip_if_missing_fields('product_sku')
+    def _validate_sku_belongs_to_product(self):
         """
-        Ensures that the selected variant actually belongs to the same product.
+        Ensures that the selected SKU actually belongs to the same product.
         """
-        if self.product_variant and self.product_variant.product_id != self.product_id:
+        if self.product_sku and self.product_sku.product_id != self.product_id:
             raise ValidationError(
-                {"product_variant": _("The selected variant does not belong to this product.")}
+                {"product_sku": _("The selected sku does not belong to this product.")}
             )
 
     @skip_if_missing_fields('product_type_attribute', 'product')
@@ -1069,15 +889,15 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
             raise ValidationError({"value": _("The selected option does not belong to the associated attribute.")})
 
     @skip_if_missing_fields('product_type_attribute')
-    def _validate_scope_matches_variant_usage(self):
+    def _validate_scope_matches_sku_usage(self):
         attr_scope = self.product_type_attribute.product_attribute.scope
-        if self.product_variant_id and attr_scope == ProductAttribute.Scope.PRODUCT:
+        if self.product_sku_id and attr_scope == ProductAttribute.Scope.PRODUCT:
             raise ValidationError({
-                "product_type_attribute": _("Product-level attributes cannot be assigned to variants.")
+                "product_type_attribute": _("Product-level attributes cannot be assigned to SKUs.")
             })
-        if not self.product_variant_id and attr_scope == ProductAttribute.Scope.VARIANT:
+        if not self.product_sku_id and attr_scope == ProductAttribute.Scope.VARIANT:
             raise ValidationError({
-                "product_type_attribute": _("Variant-level attributes cannot be assigned to products.")
+                "product_type_attribute": _("SKU-level attributes cannot be assigned to products.")
             })
 
     @skip_if_missing_fields('product_type_attribute')
@@ -1088,15 +908,15 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
             product_id=self.product_id
         )
 
-        if self.product_variant_id:
-            qs = qs.filter(product_variant_id=self.product_variant_id)
+        if self.product_sku_id:
+            qs = qs.filter(product_sku_id=self.product_sku_id)
 
         if self.pk:
             qs = qs.exclude(pk=self.pk)
 
         if qs.exists():
-            if self.product_variant_id:
-                msg = _("This attribute already exists for this product variant.")
+            if self.product_sku_id:
+                msg = _("This attribute already exists for this product SKU.")
             else:
                 msg = _("This attribute already exists for this product.")
 
@@ -1104,20 +924,11 @@ class ProductSKUAttributeValue(ModelValidationMixin, models.Model):
 
 
 class ProductImage(ModelValidationMixin, models.Model):
-    product = models.ForeignKey(
-        to=Product,
+    product_sku = models.ForeignKey(
+        to=ProductSKU,
         on_delete=models.CASCADE,
         related_name="images",
-        verbose_name=_("product"),
-    )
-    product_variant = models.ForeignKey(
-        to=ProductVariant,
-        null=True,
-        blank=True,
-        on_delete=models.CASCADE,
-        related_name="images",
-        verbose_name=_("variant"),
-        help_text=_("Optional. Attach this image to a specific variant (e.g., color photo)."),
+        verbose_name=_("SKU"),
     )
     image = models.ImageField(
         upload_to="products/images/",
@@ -1132,7 +943,7 @@ class ProductImage(ModelValidationMixin, models.Model):
     is_primary = models.BooleanField(
         default=False,
         verbose_name=_("is primary"),
-        help_text=_("Mark as the main display image for this product or variant."),
+        help_text=_("Mark as the main display image for this SKU"),
     )
     position = models.PositiveSmallIntegerField(
         default=0,
@@ -1144,8 +955,7 @@ class ProductImage(ModelValidationMixin, models.Model):
         ordering = ["position"]
 
     def __str__(self):
-        scope = f"variant {self.product_variant.sku}" if self.product_variant else "product"
-        return f"{self.product.title} ({scope})"
+        return f"{self.product_sku.title}"
 
     @transaction.atomic
     def save(self, *args, **kwargs):
@@ -1153,27 +963,8 @@ class ProductImage(ModelValidationMixin, models.Model):
         super().save(*args, **kwargs)
 
     @skip_if_missing_fields("product")
-    def _validate_variant_belongs_to_product(self):
-        if self.product_variant and self.product_variant.product_id != self.product_id:
-            raise ValidationError({"product_variant": _("Product variant must belong to the product.")})
-
-    @skip_if_missing_fields("product", "product_variant")
-    def _validate_variant_usage(self):
-        if self.product_variant and not self.product.product_type.has_variants:
-            raise ValidationError({
-                "product_variant": _(
-                    "This product type does not support "
-                    "variants, so images cannot be variant-specific."
-                )
-            })
-
-    @skip_if_missing_fields("product")
     def _validate_unique_position(self):
-        qs = ProductImage.objects.filter(product=self.product, position=self.position)
-        if self.product_variant_id:
-            qs = qs.filter(product_variant=self.product_variant)
-        else:
-            qs = qs.filter(product_variant__isnull=True)
+        qs = ProductImage.objects.filter(product_sku=self.product_sku, position=self.position)
         if self.pk:
             qs = qs.exclude(pk=self.pk)
         if qs.exists():
@@ -1181,14 +972,9 @@ class ProductImage(ModelValidationMixin, models.Model):
 
     def _handle_is_primary(self):
         """
-        Ensures that only one image is marked as primary per product or variant.
+        Ensures that only one image is marked as primary per SKU
         """
-        qs = ProductImage.objects.filter(product=self.product)
-
-        if self.product_variant_id:
-            qs = qs.filter(product_variant=self.product_variant)
-        else:
-            qs = qs.filter(product_variant__isnull=True)
+        qs = ProductImage.objects.filter(product_sku=self.product_sku)
 
         if self.pk:
             qs = qs.exclude(pk=self.pk)
@@ -1201,20 +987,11 @@ class ProductImage(ModelValidationMixin, models.Model):
 
 
 class ProductStock(ModelValidationMixin, models.Model):
-    product = models.ForeignKey(
-        to=Product,
+    product_sku = models.ForeignKey(
+        to=ProductSKU,
         on_delete=models.CASCADE,
         related_name="stocks",
-        verbose_name=_("product"),
-    )
-    product_variant = models.ForeignKey(
-        to=ProductVariant,
-        on_delete=models.CASCADE,
-        related_name="stocks",
-        null=True,
-        blank=True,
-        verbose_name=_("variant / SKU"),
-        help_text=_("Optional. Leave empty for products without variants."),
+        verbose_name=_("SKU"),
     )
     quantity = models.PositiveIntegerField(
         default=0,
@@ -1225,18 +1002,8 @@ class ProductStock(ModelValidationMixin, models.Model):
         verbose_name=_("reserved"),
     )
 
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["product", "product_variant"],
-                name="unique_stock_per_product_or_variant",
-            ),
-        ]
-
     def __str__(self):
-        if self.product_variant:
-            return f"{self.product.title} - {self.product_variant.sku}"
-        return f"{self.product.title}"
+        return self.product_sku.title
 
     # ───────────────────────────────
     # Derived property
@@ -1277,11 +1044,6 @@ class ProductStock(ModelValidationMixin, models.Model):
     # ───────────────────────────────
     # Validations
     # ───────────────────────────────
-    @skip_if_missing_fields("product_variant", "product")
-    def _validate_variant_belongs_to_product(self):
-        """Ensure the variant belongs to the same product."""
-        if self.product_variant and self.product_variant.product_id != self.product_id:
-            raise ValidationError({"product_variant": _("Variant must belong to the product.")})
 
     def _validate_reserved(self):
         """Ensure reserved ≤ total quantity."""
@@ -1289,30 +1051,9 @@ class ProductStock(ModelValidationMixin, models.Model):
             raise ValidationError({"reserved": _("Reserved quantity cannot exceed total quantity.")})
 
     @skip_if_missing_fields("product")
-    def _validate_variant_usage(self):
-        """
-        Validate that:
-        - Single-variant products should not have a variant-specific stock.
-        - Multi-variant products must specify a variant.
-        """
-        product_has_variants = self.product.product_type.has_variants
-
-        if product_has_variants and not self.product_variant:
-            raise ValidationError(
-                {"product_variant": _("Stock entry for multi-variant product must specify a variant.")}
-            )
-
-        if not product_has_variants and self.product_variant:
-            raise ValidationError(
-                {"product_variant": _("Stock entry for single-variant product must not specify a variant.")}
-            )
-
-    @skip_if_missing_fields("product")
     def _validate_unique_stock_per_product(self):
-        qs = self.__class__.objects.filter(product=self.product)
-        if self.product_variant:
-            qs = qs.filter(product_variant=self.product_variant)
+        qs = self.__class__.objects.filter(product_sku=self.product_sku)
         if self.pk:
             qs = qs.exclude(pk=self.pk)
         if qs.exists():
-            raise ValidationError(_("Stock entry for product/variant already exists."))
+            raise ValidationError(_("Stock entry for this SKU already exists."))
