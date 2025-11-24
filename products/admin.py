@@ -1,195 +1,151 @@
 from django.contrib import admin
-from django.urls.base import reverse
-from django.http.response import HttpResponseRedirect
-from django.utils.translation import gettext_lazy as _
+from django.db.models import Q
+from mptt.admin import DraggableMPTTAdmin
 
-from mptt import admin as mptt_admin
+from .models import (
+    ProductCategory,
+    ProductType,
+    ProductAttribute,
+    ProductAttributeOption,
+    ProductTypeAttribute,
+    Product,
+    ProductSKU,
+    ProductBrand,
+    ProductSKUAttributeValue,
+)
 
-from products import models, forms
+@admin.register(ProductBrand)
+class BrandAdmin(admin.ModelAdmin):
+    pass
+
+# ================================================================
+# CATEGORY ADMIN (MPTT)
+# ================================================================
+@admin.register(ProductCategory)
+class CategoryAdmin(DraggableMPTTAdmin):
+    mptt_indent_field = "title"
+    list_display = ("tree_actions", "indented_title", "is_active")
+    list_display_links = ("indented_title",)
+    list_filter = ("is_active",)
+    search_fields = ("title", "slug")
+    prepopulated_fields = {"slug": ("title",)}
 
 
-# ─────────────────────────────────────────────
-# INLINE ADMINS
-# ─────────────────────────────────────────────
-
+# ================================================================
+# PRODUCT ATTRIBUTE OPTION INLINE
+# ================================================================
 class ProductAttributeOptionInline(admin.TabularInline):
-    model = models.ProductAttributeOption
-    extra = 0
-    max_num = 1
-
-
-class ProductTypeAttributeInline(admin.TabularInline):
-    model = models.ProductTypeAttribute
+    model = ProductAttributeOption
     extra = 1
-    min_num = 1
-
-
-class ProductVariantInline(admin.TabularInline):
-    model = models.ProductVariant
-    extra = 0
-    min_num = 1
-
-
-class ProductTypeInline(admin.TabularInline):
-    model = models.ProductType
-    extra = 1
-
-
-class ProductSkuAttributeValueInline(admin.TabularInline):
-    model = models.ProductSKUAttributeValue
-    extra = 0
     show_change_link = True
-    can_delete = True
-    autocomplete_fields = ['value', 'product_type_attribute']
-
-    def get_exclude(self, request, obj=None):
-        """Hide product or variant field depending on context."""
-        if isinstance(obj, models.ProductVariant):
-            return ["product"]
-        if isinstance(obj, models.Product):
-            return ["product_variant"]
-        return []
 
 
-class ProductImageInline(admin.TabularInline):
-    model = models.ProductImage
-    extra = 0
-
-    def get_exclude(self, request, obj=None):
-        """Hide product or variant field depending on context."""
-        if isinstance(obj, models.ProductVariant):
-            return ["product"]
-        if isinstance(obj, models.Product):
-            return ["product_variant"]
-        return []
-
-
-class ProductStockInline(admin.TabularInline):
-    model = models.ProductStock
-    min_num = 1
-    max_num = 1
-
-    def get_exclude(self, request, obj=None):
-        """Hide product or variant field depending on context."""
-        if isinstance(obj, models.ProductVariant):
-            return ["product"]
-        if isinstance(obj, models.Product):
-            return ["product_variant"]
-        return []
-
-
-# ─────────────────────────────────────────────
-# MAIN ADMINS
-# ─────────────────────────────────────────────
-
-@admin.register(models.ProductAttributeOption)
-class ProductAttributeOptionAdmin(admin.ModelAdmin):
-    model = models.ProductAttributeOption
-    search_fields = ['product_attribute__title', 'value']
-
-
-@admin.register(models.ProductTypeAttribute)
-class ProductTypeAttributeAdmin(admin.ModelAdmin):
-    model = models.ProductTypeAttribute
-    search_fields = ['product_attribute__title', 'product_type__title']
-
-
-@admin.register(models.ProductCategory)
-class ProductCategoryAdmin(mptt_admin.MPTTModelAdmin):
-    mptt_level_indent = 20
-    list_display = ["title", "is_active"]
-    list_editable = ["is_active"]
-    list_filter = ["is_active"]
-    search_fields = ["title", "slug"]
-    autocomplete_fields = ['parent', ]
-    prepopulated_fields = {"slug": ("title",)}
-    inlines = [ProductTypeInline, ]
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related("parent")
-
-
-@admin.register(models.ProductBrand)
-class ProductBrandAdmin(admin.ModelAdmin):
-    search_fields = ['title', ]
-    prepopulated_fields = {"slug": ("title",)}
-
-
-@admin.register(models.ProductType)
-class ProductTypeAdmin(admin.ModelAdmin):
-    list_display = ["title", "has_variants"]
-    list_filter = ["has_variants"]
-    search_fields = ["title"]
-    inlines = [ProductTypeAttributeInline]
-    autocomplete_fields = ['product_category', ]
-
-
-@admin.register(models.ProductAttribute)
+# ================================================================
+# PRODUCT ATTRIBUTE ADMIN
+# ================================================================
+@admin.register(ProductAttribute)
 class ProductAttributeAdmin(admin.ModelAdmin):
-    list_display = ["title", "scope", "filterable"]
-    list_editable = ["filterable"]
-    list_filter = ["scope", "filterable"]
-    search_fields = ["title"]
+    list_display = ("title", "scope")
+    list_filter = ("scope",)
+    search_fields = ("title",)
     inlines = [ProductAttributeOptionInline]
 
 
-@admin.register(models.Product)
-class ProductAdmin(admin.ModelAdmin):
-    list_display = ["title", "price", "is_active"]
-    list_editable = ["is_active"]
-    list_filter = ["is_active"]
-    search_fields = ["title", "product_type__title", "product_category__title"]
-    autocomplete_fields = ['product_category', 'product_type']
-    inlines = [ProductImageInline]
+# ================================================================
+# PRODUCT TYPE ATTRIBUTE INLINE
+# ================================================================
+class ProductTypeAttributeInline(admin.TabularInline):
+    model = ProductTypeAttribute
+    extra = 1
 
-    def get_inlines(self, request, obj):
-        inlines = super().get_inlines(request, obj).copy()
-        if obj:
-            inlines.append(ProductSkuAttributeValueInline)
-        if obj and obj.product_type.has_variants:
-            inlines.append(ProductVariantInline)
-        if obj and not obj.product_type.has_variants:
-            inlines.insert(0, ProductStockInline)
-        return inlines
-
-    def response_add(self, request, obj, post_url_continue=None):
-        """
-        After adding a new product, redirect to its change page
-        so admin can fill in its attributes and variants.
-        """
-        msg = _('The product "%(obj)s" was added successfully. You can now add attributes and variants.') % {
-            "obj": obj
-        }
-
-        self.message_user(request, msg)
-
-        # Redirect to the product's edit page
-        return HttpResponseRedirect(
-            reverse("admin:products_product_change", args=[obj.pk])
-        )
+    # IMPORTANT: prevent scope mismatch in admin
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "product_attribute":
+            obj_id = request.resolver_match.kwargs.get("object_id")
+            if obj_id:
+                pt = ProductType.objects.filter(pk=obj_id).first()
+                if pt and not pt.has_variants:
+                    kwargs["queryset"] = ProductAttribute.objects.filter(scope="product")
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
-@admin.register(models.ProductVariant)
-class ProductVariantAdmin(admin.ModelAdmin):
-    list_display = ["product", "sku", "title", "price", "is_active"]
-    list_editable = ["is_active"]
-    list_filter = ["is_active"]
-    search_fields = ["product__title", "sku", "title"]
-    inlines = [ProductStockInline, ProductImageInline, ProductSkuAttributeValueInline]
+# ================================================================
+# PRODUCT TYPE ADMIN
+# ================================================================
+@admin.register(ProductType)
+class ProductTypeAdmin(admin.ModelAdmin):
+    list_display = ("title", "product_category", "has_variants")
+    list_filter = ("product_category", "has_variants")
+    search_fields = ("title", )
+    inlines = [ProductTypeAttributeInline]
 
-    def save_formset(self, request, form, formset, change):
-        """Ensure inline ProductSKUAttributeValue links to correct product + variant."""
-        instances = formset.save(commit=False)
-        for instance in instances:
-            if isinstance(
-                    instance,
-                    (
-                            models.ProductStock,
-                            models.ProductImage,
-                            models.ProductSKUAttributeValue,
+    # Ensure only attributes belonging to this category are selectable
+    def save_model(self, request, obj, form, change):
+        obj.save()
+
+
+# ================================================================
+# PRODUCT SKU ATTRIBUTE INLINE
+# ================================================================
+class ProductSKUAttributeValueInline(admin.TabularInline):
+    model = ProductSKUAttributeValue
+    extra = 1
+
+    # Filter attribute options by type-level definition
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "product_attribute_option":
+            # read parent object (SKU)
+            object_id = request.resolver_match.kwargs.get("object_id")
+            if object_id:
+                sku = ProductSKU.objects.filter(pk=object_id).first()
+                if sku:
+                    kwargs["queryset"] = ProductAttributeOption.objects.filter(
+                        product_attribute__in=ProductTypeAttribute.objects.filter(
+                            product_type=sku.product.product_type
+                        ).values("product_attribute")
                     )
-            ):
-                instance.product_variant = form.instance
-                instance.product = form.instance.product
-            instance.save()
-        formset.save_m2m()
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
+# ================================================================
+# PRODUCT SKU ADMIN
+# ================================================================
+@admin.register(ProductSKU)
+class ProductSKUAdmin(admin.ModelAdmin):
+    list_display = ("product", "title", "sku", "is_active")
+    list_filter = ("is_active", "product__product_type")
+    search_fields = ("title", "sku")
+    inlines = [ProductSKUAttributeValueInline]
+
+
+# ================================================================
+# PRODUCT ADMIN
+# ================================================================
+class ProductSKUInline(admin.TabularInline):
+    model = ProductSKU
+    extra = 1
+    show_change_link = True
+
+    # If product_type.has_variants=False → hide SKU inline completely
+    def has_view_or_change_permission(self, request, obj=None):
+        if obj and not obj.product_type.has_variants:
+            return False
+        return True
+
+
+@admin.register(Product)
+class ProductAdmin(admin.ModelAdmin):
+    list_display = ("title", "product_category", "product_type", "is_active")
+    list_filter = ("product_category", "product_type", "is_active")
+    search_fields = ("title", "slug")
+    prepopulated_fields = {"slug": ("title",)}
+    inlines = [ProductSKUAttributeValueInline, ProductSKUInline]
+
+    # Filter product types based on selected category
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "product_type":
+            if "product_category" in request.GET:
+                cat_id = request.GET.get("product_category")
+                kwargs["queryset"] = ProductType.objects.filter(product_category_id=cat_id)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+

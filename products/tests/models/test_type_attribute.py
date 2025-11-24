@@ -13,7 +13,7 @@ class ProductTypeAttributeModelTests(TestCase):
         self.product_type_with_variants = factories.ProductTypeFactory(has_variants=True)
         self.product_type_without_variants = factories.ProductTypeFactory(has_variants=False)
         self.product_attribute = factories.ProductAttributeFactory(scope=ProductAttribute.Scope.PRODUCT)
-        self.variant_attribute = factories.ProductAttributeFactory(scope=ProductAttribute.Scope.VARIANT)
+        self.variant_attribute = factories.ProductAttributeFactory(scope=ProductAttribute.Scope.SKU)
 
     # --- Helpers ---
 

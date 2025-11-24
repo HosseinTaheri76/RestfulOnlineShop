@@ -1,187 +1,140 @@
 from django.test import TestCase
 from django.core.exceptions import ValidationError
 
-from products import factories, models
-from products.models import ProductVariant, ProductAttribute
+from products.factories import (
+    ProductFactory,
+    ProductTypeFactory,
+    ProductSKUFactory,
+    ProductAttributeFactory,
+    ProductTypeAttributeFactory,
+)
+from products.models import ProductSKU, ProductSKUAttributeValue
 
 
-class ProductVariantModelTests(TestCase):
-    """Tests for ProductVariant model validation and behavior."""
+class ProductSKUTest(TestCase):
 
-    def setUp(self):
-        """Create reusable objects for tests."""
-        self.type_with_variants = factories.ProductTypeFactory(has_variants=True)
-        self.type_without_variants = factories.ProductTypeFactory(has_variants=False)
-        self.category = factories.ProductCategoryFactory(is_root=True)
+    # Single-SKU products
+    def test_single_sku_product_cannot_have_multiple_skus(self):
+        pt = ProductTypeFactory(has_variants=False)
+        p = ProductFactory(product_type=pt)
 
-        # Products
-        self.product_with_variants = factories.ProductFactory(
-            product_type=self.type_with_variants,
-            product_category=self.type_with_variants.product_category
-        )
-        self.product_without_variants = factories.ProductFactory(
-            product_type=self.type_without_variants,
-            product_category=self.type_without_variants.product_category
-        )
+        ProductSKUFactory(product=p, is_primary=True)
 
-        self.variant_attr_required = factories.ProductAttributeFactory.create(
-            scope=ProductAttribute.Scope.VARIANT,
-            title="Color",
-        )
+        with self.assertRaises(ValidationError):
+            sku = ProductSKUFactory.build(product=p)
+            sku.full_clean()
+            sku.save()
 
-        factories.ProductTypeAttributeFactory.create(
-            product_type=self.type_with_variants,
-            product_attribute=self.variant_attr_required,
+    def test_single_sku_product_primary_is_auto_set(self):
+        pt = ProductTypeFactory(has_variants=False)
+        p = ProductFactory(product_type=pt)
+
+        sku = ProductSKUFactory.build(product=p, is_primary=False)
+        sku.full_clean()
+        sku.save()
+
+        self.assertTrue(sku.is_primary)
+
+    # Multi-SKU products
+    def test_multi_sku_product_can_have_multiple_skus(self):
+        pt = ProductTypeFactory(has_variants=True)
+        p = ProductFactory(product_type=pt)
+
+        s1 = ProductSKUFactory(product=p)
+        s2 = ProductSKUFactory(product=p)
+
+        self.assertEqual(p.skus.count(), 2)
+
+    # Primary SKU rules
+    def test_setting_primary_unsets_other_primary(self):
+        pt = ProductTypeFactory(has_variants=True)
+        p = ProductFactory(product_type=pt)
+
+        a = ProductSKUFactory(product=p, is_primary=True)
+        b = ProductSKUFactory(product=p, is_primary=False)
+
+        b.is_primary = True
+        b.full_clean()
+        b.save()
+
+        a.refresh_from_db()
+        b.refresh_from_db()
+
+        self.assertFalse(a.is_primary)
+        self.assertTrue(b.is_primary)
+
+    def test_product_must_always_have_one_primary_sku(self):
+        pt = ProductTypeFactory(has_variants=True)
+        p = ProductFactory(product_type=pt)
+
+        sku = ProductSKUFactory(product=p, is_primary=True)
+
+        sku.is_primary = False
+        sku.full_clean()
+        sku.save()
+
+        sku.refresh_from_db()
+        self.assertTrue(sku.is_primary)
+
+    # Primary deactivation
+    def test_cannot_deactivate_primary_sku_of_active_product(self):
+        pt = ProductTypeFactory(has_variants=True)
+        p = ProductFactory(product_type=pt, is_active=True)
+
+        sku = ProductSKUFactory(product=p, is_primary=True)
+        sku.is_active = False
+
+        with self.assertRaises(ValidationError):
+            sku.full_clean()
+
+    # Unique title per product
+    def test_title_unique_per_product(self):
+        pt = ProductTypeFactory(has_variants=True)
+        p = ProductFactory(product_type=pt)
+
+        ProductSKUFactory(product=p, title="Blue")
+
+        duplicate = ProductSKUFactory.build(product=p, title="Blue")
+
+        with self.assertRaises(ValidationError):
+            duplicate.full_clean()
+
+    # Required SKU attributes auto-created
+    def test_required_sku_attributes_are_auto_created(self):
+        pt = ProductTypeFactory(has_variants=True)
+
+        attr = ProductAttributeFactory(scope="sku")
+
+        tattr = ProductTypeAttributeFactory(
+            product_type=pt,
+            product_attribute=attr,
             required=True,
         )
 
+        p = ProductFactory(product_type=pt)
+        sku = ProductSKUFactory(product=p)
 
-    # --- VALID CASES ---
+        created = ProductSKUAttributeValue.objects.filter(product_sku=sku)
 
-    def test_valid_variant_for_product_with_variants(self):
-        """A variant should be valid when the product type supports variants."""
-        variant = factories.ProductVariantFactory.build(
-            product=self.product_with_variants,
-            sku="SKU123",
-            title="Blue Variant",
-            is_active=True,
-        )
-        variant.full_clean()  # should not raise
-        variant.save()
-        self.assertIsNotNone(variant.pk)
-        self.assertIn("Blue Variant", str(variant))
+        self.assertEqual(created.count(), 1)
+        self.assertEqual(created.first().product_type_attribute_id, tattr.id)
 
-    def test_variant_title_falls_back_to_product_name(self):
-        """If no title is given, __str__ should use product title."""
-        variant = factories.ProductVariantFactory(
-            product=self.product_with_variants,
-            sku="SKU999",
-        )
-        self.assertIn(self.product_with_variants.title, str(variant))
+    # SKU being moved between products
+    def test_switching_sku_to_another_product_updates_primary_rules(self):
+        pt = ProductTypeFactory(has_variants=True)
 
-    # --- INVALID CASES ---
+        p1 = ProductFactory(product_type=pt)
+        p2 = ProductFactory(product_type=pt)
 
-    def test_variant_not_allowed_for_product_without_variants(self):
-        """Should raise ValidationError if product type does not support variants."""
-        variant = factories.ProductVariantFactory.build(
-            product=self.product_without_variants,
-            sku="SKU124",
-            title="Invalid Variant",
-        )
+        a = ProductSKUFactory(product=p1, is_primary=True)
+        b = ProductSKUFactory(product=p2, is_primary=True)
 
-        with self.assertRaises(ValidationError) as ctx:
-            variant.full_clean()
+        a.product = p2
+        a.full_clean()
+        a.save()
 
-        self.assertIn("cannot have variants", str(ctx.exception))
+        a.refresh_from_db()
+        b.refresh_from_db()
 
-
-    # --- ACTIVE STATUS TESTS ---
-
-    def test_inactive_category_or_product_disables_variant_in_active_manager(self):
-        """
-        Ensure that inactive products or categories make variants
-        invisible to ActiveProductVariantManager (if implemented).
-        """
-        variant = factories.ProductVariantFactory(
-            product=self.product_with_variants,
-            sku="SKU-ACTIVE",
-        )
-        # Initially active
-        self.assertTrue(variant.is_active)
-        self.assertIn(variant, ProductVariant.active.all())
-
-        # Deactivate product or category should exclude it
-        self.product_with_variants.is_active = False
-        self.product_with_variants.save()
-        self.assertNotIn(variant, ProductVariant.active.all())
-
-        # Re-activate product, deactivate category
-        self.product_with_variants.is_active = True
-        self.product_with_variants.save()
-        self.product_with_variants.product_category.is_active = False
-        self.product_with_variants.product_category.save()
-        self.assertNotIn(variant, ProductVariant.active.all())
-
-    # --- OTHER TESTS ---
-
-    def test_str_representation_with_title(self):
-        """Ensure string representation prefers variant title."""
-        variant = factories.ProductVariantFactory(
-            product=self.product_with_variants,
-            sku="SKU-TITLE",
-            title="Red Model",
-        )
-        self.assertIn("Red Model", str(variant))
-
-    def test_cannot_activate_variant_under_inactive_product(self):
-        self.product_with_variants.is_active = False
-        self.product_with_variants.save()
-        variant = factories.ProductVariantFactory(
-            is_active=False,
-            product=self.product_with_variants,
-        )
-        variant.is_active = True
-        with self.assertRaises(ValidationError) as ctx:
-            variant.full_clean()
-
-        self.assertIn("Cannot activate variant", str(ctx.exception))
-
-    # ────────────────────────────────
-    # PRIMARY HANDLING LOGIC TESTS
-    # ────────────────────────────────
-
-    def test_saving_primary_variant_unsets_other_primaries(self):
-        """When a new variant is saved as primary, it demotes previous primaries."""
-        v1 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=True)
-        v2 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=False)
-
-        # Make v2 primary
-        v2.is_primary = True
-        v2.save()
-        v1.refresh_from_db()
-        v2.refresh_from_db()
-
-        self.assertTrue(v2.is_primary)
-        self.assertFalse(v1.is_primary)
-
-    def test_first_variant_becomes_primary_automatically(self):
-        """If no primary exists, first variant saved becomes primary automatically."""
-        v1 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=False)
-        self.assertTrue(v1.is_primary)
-
-    def test_non_primary_variant_does_not_affect_existing_primary(self):
-        """Saving a non-primary variant should not unset existing primaries."""
-        v1 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=True)
-        v2 = factories.ProductVariantFactory(product=self.product_with_variants, is_primary=False)
-        v2.is_primary = False
-        v2.save()
-
-        v1.refresh_from_db()
-        v2.refresh_from_db()
-
-        self.assertTrue(v1.is_primary)
-        self.assertFalse(v2.is_primary)
-
-
-    def test_create_required_variant_attributes(self):
-        """Ensure required VARIANT-scope attributes are created after variant save."""
-        variant = factories.ProductVariantFactory.create(product=self.product_with_variants)
-
-        variant._create_required_attributes()
-
-        attrs = models.ProductSKUAttributeValue.objects.filter(product_variant=variant)
-        self.assertEqual(attrs.count(), 1)
-        self.assertEqual(
-            attrs.first().product_type_attribute.product_attribute, self.variant_attr_required
-        )
-
-    def test_does_not_duplicate_existing_variant_attributes(self):
-        """Ensure required VARIANT attributes are not duplicated."""
-        variant = factories.ProductVariantFactory.create(product=self.product_with_variants)
-        variant._create_required_attributes()
-        first_count = models.ProductSKUAttributeValue.objects.count()
-
-        variant._create_required_attributes()
-        second_count = models.ProductSKUAttributeValue.objects.count()
-
-        self.assertEqual(first_count, second_count)
+        self.assertTrue(a.is_primary)
+        self.assertFalse(b.is_primary)

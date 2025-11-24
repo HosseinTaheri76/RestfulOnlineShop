@@ -134,26 +134,11 @@ class ProductFactory(factory.django.DjangoModelFactory):
     is_active = True
 
     @factory.lazy_attribute
-    def price(self):
-        # Assign price only for single-variant products
-        return fake.pydecimal(
-            left_digits=4,
-            right_digits=2,
-            positive=True) if not self.product_type.has_variants else None
-
-    @factory.lazy_attribute
-    def sku(self):
-        if not self.product_type.has_variants:
-            # Generate a unique SKU
-            return f"SKU-{fake.unique.random_int(min=1000, max=9999)}"
-        return None
-
-    @factory.lazy_attribute
     def product_category(self):
         return self.product_type.product_category
 
 
-class ProductVariantFactory(factory.django.DjangoModelFactory):
+class ProductSKUFactory(factory.django.DjangoModelFactory):
     """
     Factory for generating ProductVariant instances for testing.
 
@@ -161,7 +146,7 @@ class ProductVariantFactory(factory.django.DjangoModelFactory):
     """
 
     class Meta:
-        model = models.ProductVariant
+        model = models.ProductSKU
 
     product = factory.SubFactory(ProductFactory)
     price = factory.LazyAttribute(lambda _: round(fake.pydecimal(left_digits=4, right_digits=2, positive=True), 2))
@@ -183,7 +168,7 @@ class ProductSKUAttributeValueFactory(factory.django.DjangoModelFactory):
         model = models.ProductSKUAttributeValue
 
     product = factory.SubFactory(ProductFactory)
-    product_variant = None
+    product_sku = None
     product_type_attribute = factory.LazyAttribute(
         lambda o: ProductTypeAttributeFactory(product_type=o.product.product_type)
     )
@@ -201,8 +186,7 @@ class ProductImageFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = models.ProductImage
 
-    product = factory.SubFactory("products.tests.factories.ProductFactory")
-    product_variant = None  # can override when needed
+    product_sku = factory.SubFactory(ProductSKUFactory)
     image = factory.LazyAttribute(lambda _: ContentFile(fake.image(image_format="jpeg"), name="test.jpg"))
     alt_text = factory.LazyAttribute(lambda _: fake.sentence(nb_words=4))
     is_primary = False
@@ -213,7 +197,6 @@ class ProductStockFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = models.ProductStock
 
-    product = factory.SubFactory(ProductFactory)
-    product_variant = None
+    product_sku = factory.SubFactory(ProductSKUFactory)
     quantity = 10
     reserved = 0

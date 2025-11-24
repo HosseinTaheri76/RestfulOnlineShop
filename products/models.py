@@ -566,7 +566,7 @@ class ProductTypeAttribute(ModelValidationMixin, models.Model):
         """Ensure variant attributes aren't assigned to non-variant product types."""
         if (
                 not self.product_type.has_variants
-                and self.product_attribute.scope == self.product_attribute.Scope.VARIANT
+                and self.product_attribute.scope == self.product_attribute.Scope.SKU
         ):
             raise ValidationError({
                 "product_attribute": _(
@@ -639,24 +639,6 @@ class Product(ModelValidationMixin, SlugModelMixin, models.Model):
     def get_absolute_url(self) -> str:
         """Return absolute URL."""
         return reverse('products:product-detail', kwargs={'product_slug': self.slug})
-
-    @property
-    def primary_sku(self):
-        return
-
-    @property
-    def is_available(self):
-        return
-
-    #
-    @cached_property
-    def effective_price(self):
-        return
-
-    @cached_property
-    def thumbnail_image_url(self):
-        return
-
 
     @skip_if_missing_fields("product_category")
     def _validate_category_is_leaf_node(self):
@@ -769,6 +751,8 @@ class ProductSKU(ModelValidationMixin, models.Model):
     # product and category are also active.
     active = ActiveProductSKUManager()
 
+    _tracker = FieldTracker(fields=["product_id", "is_primary", "is_active"])
+
     class Meta:
         verbose_name = _("product SKU")
         verbose_name_plural = _("product SKUs")
@@ -785,39 +769,90 @@ class ProductSKU(ModelValidationMixin, models.Model):
 
     @transaction.atomic
     def save(self, *args, **kwargs):
-        self._handle_is_primary()
+        self._handle_primary_sku_rules()
         super().save(*args, **kwargs)
         self._create_required_attributes()
-
-    @cached_property
-    def is_available(self):
-        return
-
-    @cached_property
-    def primary_image_url(self):
-        return
-
 
     @skip_if_missing_fields('product')
     def _validate_is_active(self):
         if self.is_active and not self.product.is_active:
             raise ValidationError({"is_active": _("Cannot activate SKU under inactive product.")})
 
-    # ────────────────────────────────
-    # Helpers
-    # ────────────────────────────────
-    def _handle_is_primary(self):
+    # -----------------------------------------------------
+    # VALIDATIONS (run by ModelValidationMixin)
+    # -----------------------------------------------------
+    def _validate_single_sku_products(self):
+        """
+        If product type has no variants:
+            - Must always have exactly ONE SKU
+            - That SKU must be primary
+        """
+        if not self.product.product_type.has_variants:
+            # product should have only one SKU
+            qs = self.product.skus.all()
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+
+            if qs.exists():
+                raise ValidationError(
+                    _("This product type does not allow multiple SKUs.")
+                )
+
+            # single SKU must always be primary
+            if not self.is_primary:
+                self.is_primary = True
+
+    def _handle_primary_sku_rules(self):
+        """
+        Enforce: a product must always have exactly one primary SKU.
+        Logic is unified for create, update, and FK reassignment.
+        """
 
         qs = ProductSKU.objects.filter(product=self.product)
 
         if self.pk:
             qs = qs.exclude(pk=self.pk)
 
+        # Case 1 — setting this SKU as primary
         if self.is_primary:
+            # deactivate all other primary skus
             qs.select_for_update().update(is_primary=False)
+            return
 
-        elif not qs.filter(is_primary=True).exists():
+        # Case 2 — is_primary is False
+        # ensure the product won’t be left without a primary
+        if not qs.filter(is_primary=True).exists():
+            # Promote this SKU to primary automatically
             self.is_primary = True
+
+    def _validate_primary_deactivation(self):
+        """
+        Prevent deactivation of the primary SKU unless:
+        - Product is inactive, OR
+        - Another SKU will become primary
+        """
+        if not self._tracker.has_changed("is_active"):
+            return
+
+        if self.is_active:  # activating → fine
+            return
+
+        if not self.is_primary:
+            return
+
+        # At this point: trying to deactivate primary SKU
+        product = self.product
+
+        if not product.is_active:
+            return  # totally allowed
+
+        # Active product cannot lose its primary SKU
+        raise ValidationError(
+            {
+                'is_primary': _("Either inactivate the whole product or change the primary SKU "
+                                "before inactivating it.")
+            }
+        )
 
     def _create_required_attributes(self):
         """
@@ -1020,7 +1055,7 @@ class ProductImage(ModelValidationMixin, models.Model):
         self._handle_is_primary()
         super().save(*args, **kwargs)
 
-    @skip_if_missing_fields("product")
+    @skip_if_missing_fields("product_sku")
     def _validate_unique_position(self):
         qs = ProductImage.objects.filter(product_sku=self.product_sku, position=self.position)
         if self.pk:
@@ -1108,7 +1143,7 @@ class ProductStock(ModelValidationMixin, models.Model):
         if self.reserved > self.quantity:
             raise ValidationError({"reserved": _("Reserved quantity cannot exceed total quantity.")})
 
-    @skip_if_missing_fields("product")
+    @skip_if_missing_fields("product_sku")
     def _validate_unique_stock_per_product(self):
         qs = self.__class__.objects.filter(product_sku=self.product_sku)
         if self.pk:

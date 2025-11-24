@@ -6,7 +6,7 @@ from products.models import ProductSKUAttributeValue
 from products.factories import (
     ProductFactory,
     ProductTypeFactory,
-    ProductVariantFactory,
+    ProductSKUFactory,
     ProductAttributeFactory,
     ProductTypeAttributeFactory,
     ProductAttributeOptionFactory,
@@ -16,15 +16,6 @@ from products.factories import (
 
 class TestProductSKUAttributeValue(TestCase):
 
-    @staticmethod
-    def build_product(has_variants=False, commit=True):
-        product_type = ProductTypeFactory(has_variants=has_variants)
-        product_category = product_type.product_category
-        method = 'create' if commit else 'build'
-        return getattr(ProductFactory, method)(
-            product_type=product_type,
-            product_category=product_category,
-        )
 
     def test_valid_product_attribute_value_creation(self):
         """Valid instance should pass validation and save successfully."""
@@ -36,11 +27,12 @@ class TestProductSKUAttributeValue(TestCase):
 
     def test_variant_must_belong_to_product(self):
         """Ensure variant must belong to the same product."""
-        product = self.build_product(has_variants=True)
-        variant = ProductVariantFactory(product=product)
-        other_product = self.build_product(has_variants=True)
+        product_type = ProductTypeFactory(has_variants=True)
+        product = ProductFactory(product_type=product_type)
+        variant = ProductSKUFactory(product=product)
+        other_product = ProductFactory(product_type=product_type)
         attribute = ProductAttributeFactory(
-            scope=models.ProductAttribute.Scope.VARIANT
+            scope=models.ProductAttribute.Scope.SKU
         )
         ta = ProductTypeAttributeFactory(
             product_type=other_product.product_type,
@@ -51,7 +43,7 @@ class TestProductSKUAttributeValue(TestCase):
         )
         value = ProductSKUAttributeValueFactory.build(
             product=other_product,
-            product_variant=variant,
+            product_sku=variant,
             product_type_attribute=ta,
             value=attr_value,
         )
@@ -59,11 +51,11 @@ class TestProductSKUAttributeValue(TestCase):
         with self.assertRaises(ValidationError) as ctx:
             value.full_clean()
 
-        self.assertIn("product_variant", ctx.exception.message_dict)
+        self.assertIn("product_sku", ctx.exception.message_dict)
 
     def test_attribute_must_belong_to_product_type(self):
         """Ensure attribute belongs to the product's type."""
-        p = self.build_product(has_variants=False)
+        p = ProductFactory()
         wrong_type_attr = ProductTypeAttributeFactory()  # unrelated type
 
         value = ProductSKUAttributeValueFactory.build(
@@ -78,7 +70,8 @@ class TestProductSKUAttributeValue(TestCase):
 
     def test_attribute_option_must_belong_to_attribute(self):
         """Ensure selected option belongs to the correct attribute."""
-        p = self.build_product(has_variants=False)
+        pt = ProductTypeFactory(has_variants=False)
+        p = ProductFactory(product_type=pt)
         attribute = ProductAttributeFactory(scope=models.ProductAttribute.Scope.PRODUCT)
         type_attr = ProductTypeAttributeFactory(product_type=p.product_type, product_attribute=attribute)
         wrong_option = ProductAttributeOptionFactory()  # belongs to a different attribute
@@ -96,8 +89,9 @@ class TestProductSKUAttributeValue(TestCase):
 
     def test_variant_scope_mismatch_validation(self):
         """Ensure product-wide attributes cannot be assigned to a variant."""
-        p = self.build_product(has_variants=True)
-        variant = ProductVariantFactory(product=p)
+        pt = ProductTypeFactory(has_variants=True)
+        p = ProductFactory(product_type=pt)
+        variant = ProductSKUFactory(product=p)
         attr = ProductAttributeFactory(scope="product")
         type_attr = ProductTypeAttributeFactory(
             product_type=p.product_type,
@@ -107,7 +101,7 @@ class TestProductSKUAttributeValue(TestCase):
 
         value = ProductSKUAttributeValueFactory.build(
             product=p,
-            product_variant=variant,
+            product_sku=variant,
             product_type_attribute=type_attr,
             value=opt,
         )
@@ -115,7 +109,7 @@ class TestProductSKUAttributeValue(TestCase):
         with self.assertRaises(ValidationError) as ctx:
             value.full_clean()
 
-        self.assertIn("cannot be assigned to variants.", str(ctx.exception.message_dict))
+        self.assertIn("cannot be assigned to SKUs.", str(ctx.exception.message_dict))
 
     # def test_unique_constraint_product_variant_and_attribute(self):
     #     Todo: fix this test

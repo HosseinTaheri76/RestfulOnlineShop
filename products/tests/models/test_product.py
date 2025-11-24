@@ -8,7 +8,7 @@ from products.factories import (
     ProductTypeFactory,
     ProductCategoryFactory,
     ProductAttributeFactory,
-    ProductVariantFactory,
+    ProductSKUFactory,
     ProductTypeAttributeFactory
 )
 
@@ -25,7 +25,7 @@ class ProductModelValidationTests(TestCase):
             title="CPU",
         )
         self.variant_attr_required = ProductAttributeFactory.create(
-            scope=models.ProductAttribute.Scope.VARIANT,
+            scope=models.ProductAttribute.Scope.SKU,
             title="Storage",
         )
         ProductTypeAttributeFactory.create(
@@ -40,56 +40,6 @@ class ProductModelValidationTests(TestCase):
         )
         self.product = ProductFactory.create(product_type=self.type_with_variants)
 
-    def test_product_with_variants_must_not_have_price(self):
-        """A product with variants should not have a price value."""
-        product = ProductFactory.build(
-            product_type=self.type_with_variants,
-            product_category=self.type_with_variants.product_category,
-            price=Decimal("99.99")
-        )
-
-        with self.assertRaises(ValidationError) as ctx:
-            product.full_clean()
-        self.assertIn("price", ctx.exception.message_dict)
-        self.assertIn("must be empty", ctx.exception.message_dict["price"][0])
-
-    def test_product_without_variants_must_have_price(self):
-        """A product without variants must define a price."""
-        product = ProductFactory.build(
-            product_type=self.type_without_variants,
-            product_category=self.type_without_variants.product_category,
-            price=None
-        )
-
-        with self.assertRaises(ValidationError) as ctx:
-            product.full_clean()
-        self.assertIn("price", ctx.exception.message_dict)
-        self.assertIn("must be filled", ctx.exception.message_dict["price"][0])
-
-    def test_product_with_variants_can_have_no_price(self):
-        """A product with variants and no price should pass validation."""
-        product = ProductFactory(
-            product_type=self.type_with_variants,
-            product_category=self.type_with_variants.product_category,
-            price=None
-        )
-        try:
-            product.full_clean()
-        except ValidationError:
-            self.fail("Product with variants and no price raised ValidationError unexpectedly.")
-
-    def test_product_without_variants_with_price_is_valid(self):
-        """A product without variants and a price should be valid."""
-        product = ProductFactory(
-            product_type=self.type_without_variants,
-            product_category=self.type_without_variants.product_category,
-            price=Decimal("49.99"),
-            sku='123456'
-        )
-        try:
-            product.full_clean()
-        except ValidationError:
-            self.fail("Product without variants and price raised ValidationError unexpectedly.")
 
     def test_active_manager_returns_only_products_and_categories_that_are_active(self):
         """ActiveProductManager should only return products and categories that are active."""
@@ -99,7 +49,6 @@ class ProductModelValidationTests(TestCase):
         active_product = ProductFactory(
             product_category=active_category,
             is_active=True,
-            price=Decimal("10.00"),
             product_type=product_type,
         )
 
@@ -112,7 +61,6 @@ class ProductModelValidationTests(TestCase):
         inactive_product = ProductFactory(
             product_category=active_category,
             is_active=False,
-            price=Decimal("10.00"),
             product_type=product_type,
         )
         active_products = models.Product.active.all()
@@ -122,7 +70,6 @@ class ProductModelValidationTests(TestCase):
         inactive_category_product = ProductFactory(
             product_category=active_category,
             is_active=True,
-            price=Decimal("10.00"),
             product_type=product_type,
         )
         active_category.is_active = False
@@ -149,7 +96,7 @@ class ProductModelValidationTests(TestCase):
         self.product._create_required_attributes()
 
         attrs = models.ProductSKUAttributeValue.objects.filter(
-            product=self.product, product_variant__isnull=True
+            product=self.product, product_sku__isnull=True
         )
         self.assertEqual(attrs.count(), 1)
         self.assertEqual(
@@ -171,10 +118,10 @@ class ProductModelValidationTests(TestCase):
     def test_product_variant_primary_handling(self):
         """Ensure the first variant becomes primary automatically."""
 
-        variant1 = ProductVariantFactory.create(product=self.product)
+        variant1 = ProductSKUFactory.create(product=self.product)
         self.assertTrue(variant1.is_primary)
 
-        variant2 = ProductVariantFactory.create(product=self.product, is_primary=True)
+        variant2 = ProductSKUFactory.create(product=self.product, is_primary=True)
         variant1.refresh_from_db()
         variant2.refresh_from_db()
 
