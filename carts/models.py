@@ -4,7 +4,7 @@ from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 
-from products.models import Product, ProductVariant
+from products.models import ProductSKU
 
 class Cart(models.Model):
     id = models.UUIDField(
@@ -40,22 +40,16 @@ class CartItem(models.Model):
         related_name='items',
         verbose_name=_('Cart'),
     )
-    product = models.ForeignKey(
-        to=Product,
+    sku = models.ForeignKey(
+        to=ProductSKU,
         on_delete=models.PROTECT,
         related_name='cart_items',
         verbose_name=_('Product'),
-    )
-    product_variant = models.ForeignKey(
-        to=ProductVariant,
-        on_delete=models.PROTECT,
-        related_name='cart_items',
-        null=True,
-        blank=True,
-        verbose_name=_('Product Variant'),
     )
     quantity = models.PositiveIntegerField(
         default=1,
         verbose_name=_('Quantity'),
     )
+    class Meta:
+        unique_together = (('cart', 'sku'),)
 
