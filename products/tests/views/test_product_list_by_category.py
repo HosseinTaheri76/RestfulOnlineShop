@@ -22,7 +22,7 @@ class ProductListByCategoryViewTests(TestCase):
             product_category=self.subcategory,
             product_type=self.product_type,
         )
-        self.product_1_primary_variant = factories.ProductVariantFactory(
+        self.product_1_primary_variant = factories.ProductSKUFactory(
             product=self.product1,
             price=1000,
         )
@@ -31,21 +31,19 @@ class ProductListByCategoryViewTests(TestCase):
             product_category=self.subcategory,
             product_type=self.product_type,
         )
-        self.product_2_primary_variant = factories.ProductVariantFactory(
+        self.product_2_primary_variant = factories.ProductSKUFactory(
             product=self.product2,
             price=2000,
         )
 
         # Create stocks (both available)
         factories.ProductStockFactory(
-            product_variant=self.product_1_primary_variant,
-            product=self.product1,
+            product_sku=self.product_1_primary_variant,
             quantity=10,
             reserved=2
         )
         factories.ProductStockFactory(
-            product_variant=self.product_2_primary_variant,
-            product=self.product2,
+            product_sku=self.product_2_primary_variant,
             quantity=5,
             reserved=0
         )
@@ -54,12 +52,12 @@ class ProductListByCategoryViewTests(TestCase):
         self.attr_color = factories.ProductAttributeFactory(
             title="Color",
             filterable=True,
-            scope=models.ProductAttribute.Scope.VARIANT
+            scope=models.ProductAttribute.Scope.SKU
         )
         self.attr_storage = factories.ProductAttributeFactory(
             title="Storage",
             filterable=True,
-            scope=models.ProductAttribute.Scope.VARIANT
+            scope=models.ProductAttribute.Scope.SKU
         )
 
         # Link attributes to product type
@@ -81,25 +79,25 @@ class ProductListByCategoryViewTests(TestCase):
         # Attach attributes to products
         factories.ProductSKUAttributeValueFactory(
             product=self.product1,
-            product_variant=self.product_1_primary_variant,
+            product_sku=self.product_1_primary_variant,
             product_type_attribute=self.ta_color,
             value=self.red
         )
         factories.ProductSKUAttributeValueFactory(
             product=self.product1,
-            product_variant=self.product_1_primary_variant,
+            product_sku=self.product_1_primary_variant,
             product_type_attribute=self.ta_storage,
             value=self.storage_128
         )
         factories.ProductSKUAttributeValueFactory(
             product=self.product2,
-            product_variant=self.product_2_primary_variant,
+            product_sku=self.product_2_primary_variant,
             product_type_attribute=self.ta_color,
             value=self.blue
         )
         factories.ProductSKUAttributeValueFactory(
             product=self.product2,
-            product_variant=self.product_2_primary_variant,
+            product_sku=self.product_2_primary_variant,
             product_type_attribute=self.ta_storage,
             value=self.storage_256
         )

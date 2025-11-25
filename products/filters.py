@@ -73,8 +73,8 @@ class ProductAttributeFilterBackend(BaseFilterBackend):
                 )
                 |
                 Q(
-                    variants__attribute_values__product_type_attribute__product_attribute_id=attr_id,
-                    variants__attribute_values__value_id__in=option_ids
+                    skus__attribute_values__product_type_attribute__product_attribute_id=attr_id,
+                    skus__attribute_values__value_id__in=option_ids
                 )
             )
 

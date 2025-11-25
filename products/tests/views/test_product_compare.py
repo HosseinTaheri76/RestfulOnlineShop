@@ -28,19 +28,16 @@ class ProductCompareViewTests(TestCase):
             product_category=self.category,
             product_type=self.product_type,
             product_brand=self.brand,
-            price=100,
         )
         self.product2 = ProductFactory(
             product_category=self.category,
             product_type=self.product_type,
             product_brand=self.brand,
-            price=150,
         )
         self.product3 = ProductFactory(
             product_category=self.category,
             product_type=self.product_type,
             product_brand=self.brand,
-            price=200,
         )
 
     # ───────────────────────────────────────────────

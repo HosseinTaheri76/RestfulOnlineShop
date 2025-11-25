@@ -13,108 +13,7 @@ from django.db.models import Prefetch, QuerySet, Case, When, OuterRef, Subquery,
 from django.db.models.aggregates import Max
 
 from . import models
-
-
-# ───────────────────────────────────────────────────────────────
-# PRODUCTS
-# ───────────────────────────────────────────────────────────────
-
-def get_product_queryset(prefetch_attribute_values: bool = False) -> QuerySet:
-    """
-    Return the base queryset for active products with all required prefetches.
-
-    Args:
-        prefetch_attribute_values (bool):
-            If True, prefetch related ProductSKUAttributeValue objects for both
-            products and variants, including related ProductAttribute and Value.
-
-    Returns:
-        QuerySet[models.Product]:
-            A queryset of products optimized for list and detail views.
-    """
-    Product = models.Product
-    ProductImage = models.ProductImage
-    ProductStock = models.ProductStock
-    ProductVariant = models.ProductVariant
-    ProductSKUAttributeValue = models.ProductSKUAttributeValue
-
-    # Prefetch related objects for variants
-    variant_prefetches = [
-        Prefetch("stocks", to_attr="prefetched_stocks"),
-        Prefetch("images", to_attr="prefetched_images"),
-    ]
-
-    # Prefetch related objects for base products
-    product_prefetches = [
-        Prefetch(
-            lookup="stocks",
-            to_attr="prefetched_stocks",
-            queryset=ProductStock.objects.filter(product_variant__isnull=True),
-        ),
-        Prefetch(
-            lookup="images",
-            to_attr="prefetched_images",
-            queryset=ProductImage.objects.filter(product_variant__isnull=True),
-        ),
-    ]
-
-    # Optionally prefetch attribute values for both product and variant
-    if prefetch_attribute_values:
-        variant_prefetches.append(
-            Prefetch(
-                lookup="attribute_values",
-                to_attr="prefetched_attribute_values",
-                queryset=ProductSKUAttributeValue.objects.select_related(
-                    "value__product_attribute",
-                    "product_type_attribute__product_attribute"
-                )
-            )
-        )
-        product_prefetches.append(
-            Prefetch(
-                lookup="attribute_values",
-                to_attr="prefetched_attribute_values",
-                queryset=(
-                    ProductSKUAttributeValue.objects.
-                    filter(product_variant__isnull=True).
-                    select_related(
-                        "value__product_attribute",
-                        "product_type_attribute__product_attribute"
-                    )
-                ),
-            )
-        )
-
-    # Prefetch variants under products
-    product_prefetches.append(
-        Prefetch(
-            lookup="variants",
-            to_attr="prefetched_variants",
-            queryset=ProductVariant.active.prefetch_related(*variant_prefetches),
-        )
-    )
-
-    primary_variant_price = (
-        ProductVariant.active
-        .filter(product=OuterRef("pk"), is_primary=True)
-        .values("price")[:1]
-    )
-
-
-    # Return optimized queryset
-    return (
-        Product.active
-        .select_related("product_type", "product_category", "product_brand")
-        .prefetch_related(*product_prefetches)
-        .annotate(
-            effective_price=Case(
-                When(price__isnull=False, then=F("price")),
-                default=Subquery(primary_variant_price),
-                output_field=DecimalField(),
-            )
-        )
-    )
-
+from .models import ProductStock
 
 # ───────────────────────────────────────────────────────────────
 # CATEGORIES
@@ -164,7 +63,7 @@ def get_products_by_category(product_category: models.ProductCategory) -> QueryS
         .values_list("id", flat=True)
     )
 
-    return get_product_queryset(prefetch_attribute_values=False).filter(product_category_id__in=category_ids)
+    return get_products(prefetch_attribute_values=False).filter(product_category_id__in=category_ids)
 
 
 # ───────────────────────────────────────────────────────────────
@@ -218,4 +117,65 @@ def get_attribute_options_by_category(product_category: models.ProductCategory) 
         )
         .prefetch_related(option_prefetch)
         .distinct()
+    )
+
+
+def get_products(prefetch_attribute_values: bool = False):
+    Product = models.Product
+    ProductSKU = models.ProductSKU
+    ProductSKUAttributeValue = models.ProductSKUAttributeValue
+
+    product_prefetches = []
+
+    sku_prefetches = [
+        Prefetch('stocks', to_attr='prefetched_stocks'),
+        Prefetch('images', to_attr='prefetched_images'),
+    ]
+
+    if prefetch_attribute_values:
+        sku_prefetches.append(
+            Prefetch(
+                lookup='attribute_values',
+                to_attr='prefetched_attribute_values',
+                queryset=ProductSKUAttributeValue.objects.select_related(
+                    "value__product_attribute",
+                    "product_type_attribute__product_attribute"
+                )
+            )
+        )
+        product_prefetches.append(
+            Prefetch(
+                lookup="attribute_values",
+                to_attr="prefetched_attribute_values",
+                queryset=(
+                    ProductSKUAttributeValue.objects.
+                    filter(product_sku__isnull=True).
+                    select_related(
+                        "value__product_attribute",
+                        "product_type_attribute__product_attribute"
+                    )
+                ),
+            )
+        )
+
+    product_prefetches.append(
+        Prefetch(
+            lookup="skus",
+            to_attr="prefetched_skus",
+            queryset=ProductSKU.active.prefetch_related(*sku_prefetches),
+        )
+    )
+
+    primary_sku_price = (
+        ProductSKU.active
+        .filter(product=OuterRef("pk"), is_primary=True)
+        .values("price")[:1]
+    )
+
+    # Return optimized queryset
+    return (
+        Product.active
+        .select_related("product_type", "product_category", "product_brand")
+        .prefetch_related(*product_prefetches)
+        .annotate(effective_price=Subquery(primary_sku_price),)
     )

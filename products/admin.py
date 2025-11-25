@@ -11,12 +11,21 @@ from .models import (
     Product,
     ProductSKU,
     ProductBrand,
-    ProductSKUAttributeValue,
+    ProductSKUAttributeValue, ProductStock, ProductImage,
 )
 
 @admin.register(ProductBrand)
 class BrandAdmin(admin.ModelAdmin):
     pass
+
+
+class ProductStockInline(admin.TabularInline):
+    model = ProductStock
+    extra = 0
+
+class ProductImageInline(admin.TabularInline):
+    model = ProductImage
+    extra = 0
 
 # ================================================================
 # CATEGORY ADMIN (MPTT)
@@ -115,7 +124,7 @@ class ProductSKUAdmin(admin.ModelAdmin):
     list_display = ("product", "title", "sku", "is_active")
     list_filter = ("is_active", "product__product_type")
     search_fields = ("title", "sku")
-    inlines = [ProductSKUAttributeValueInline]
+    inlines = [ProductStockInline, ProductImageInline, ProductSKUAttributeValueInline]
 
 
 # ================================================================

@@ -640,6 +640,31 @@ class Product(ModelValidationMixin, SlugModelMixin, models.Model):
         """Return absolute URL."""
         return reverse('products:product-detail', kwargs={'product_slug': self.slug})
 
+    @cached_property
+    def primary_sku(self):
+        skus = get_prefetched(obj=self, attr_name='prefetched_skus', fallback_qs=self.skus(manager='active').all())
+        for sku in skus:
+            if sku.is_primary:
+                return sku
+        return None
+
+    @cached_property
+    def thumbnail_image_url(self):
+        if primary_sku := self.primary_sku:
+            primary_sku_images = get_prefetched(primary_sku, 'prefetched_images', primary_sku.images.all())
+            for image in primary_sku_images:
+                if image.is_primary:
+                    return image.image.url
+        return None
+
+    @cached_property
+    def is_available(self):
+        skus = get_prefetched(obj=self, attr_name='prefetched_skus', fallback_qs=self.skus(manager='active').all())
+        for sku in skus:
+            if sku.is_available:
+                return True
+        return False
+
     @skip_if_missing_fields("product_category")
     def _validate_category_is_leaf_node(self):
         if not self.product_category.is_leaf_node():
@@ -778,9 +803,17 @@ class ProductSKU(ModelValidationMixin, models.Model):
         if self.is_active and not self.product.is_active:
             raise ValidationError({"is_active": _("Cannot activate SKU under inactive product.")})
 
+    @cached_property
+    def is_available(self):
+        stocks = get_prefetched(self, 'prefetched_stocks', self.stocks.all())
+        if len(stocks) != 1:
+            return False
+        return stocks[0].available > 0
+
     # -----------------------------------------------------
     # VALIDATIONS (run by ModelValidationMixin)
     # -----------------------------------------------------
+    @skip_if_missing_fields('product')
     def _validate_single_sku_products(self):
         """
         If product type has no variants:

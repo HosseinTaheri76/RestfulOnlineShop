@@ -28,7 +28,7 @@ class ProductDetailViewTests(TestCase):
         )
 
         # Create primary variant (SKU)
-        self.sku = factories.ProductVariantFactory(
+        self.sku = factories.ProductSKUFactory(
             product=self.product,
             sku="IPH16-BLK-128",
             is_primary=True,
@@ -37,8 +37,7 @@ class ProductDetailViewTests(TestCase):
 
         # Create some stock for SKU
         self.stock = factories.ProductStockFactory(
-            product=self.product,
-            product_variant=self.sku,
+            product_sku=self.sku,
             quantity=5,
             reserved=1,
         )
@@ -47,7 +46,7 @@ class ProductDetailViewTests(TestCase):
         self.attribute = factories.ProductAttributeFactory(
             title="Color",
             filterable=True,
-            scope=models.ProductAttribute.Scope.VARIANT
+            scope=models.ProductAttribute.Scope.SKU
         )
         self.ta = factories.ProductTypeAttributeFactory(product_type=self.type, product_attribute=self.attribute)
 
@@ -60,7 +59,7 @@ class ProductDetailViewTests(TestCase):
         # Assuming you use ProductSKUAttributeValue model
         self.attr_value = factories.ProductSKUAttributeValueFactory(
             product=self.product,
-            product_variant=self.sku,
+            product_sku=self.sku,
             product_type_attribute=self.ta,
             value=self.option_black,
         )
@@ -81,7 +80,7 @@ class ProductDetailViewTests(TestCase):
         self.assertEqual(data["title"], "iPhone 16")
 
         # Check variants
-        variants = data.get("variants", [])
+        variants = data.get("skus", [])
         self.assertTrue(any(v["sku"] == "IPH16-BLK-128" for v in variants))
 
         # Check that attribute values are serialized
